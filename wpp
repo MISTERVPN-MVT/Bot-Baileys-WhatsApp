@@ -4,7 +4,7 @@ IFS=$'\n\t'
 export LANG=C.UTF-8
 export LC_ALL=C.UTF-8
 
-VERSION="2.0.0"
+VERSION="2.0.2"
 APP_TITLE="WPP Bot Manager"
 PM2_NAME="wpp-bot"
 BOT_ZIP_URL="https://github.com/MISTERVPN-MVT/Bot-Baileys-WhatsApp/raw/refs/heads/main/bot-wpp-baileys.zip"
@@ -501,11 +501,11 @@ whatsapp_state() {
   local tail
   tail="$(tail -n 200 "$out" "$err" 2>/dev/null || true)"
 
-  if echo "$tail" | grep -qiE 'Own LID session created|session opened successfully|connected|ready|logged in'; then
+  if echo "$tail" | grep -qE 'Own LID session created|"msg":"connected"'; then
     echo "CONECTADO"
     return 0
   fi
-  if echo "$tail" | grep -qiE 'pairing|pareamento|CODIGO DE PAREAMENTO'; then
+  if echo "$tail" | grep -qE 'CODIGO DE PAREAMENTO|CÓDIGO DE PAREAMENTO'; then
     echo "PAREANDO"
     return 0
   fi
@@ -603,6 +603,34 @@ show_pairing_code_box() {
   echo
 }
 
+extract_pairing_code_from_logs() {
+  local out="${LOG_OUT}"
+  local err="${LOG_ERR}"
+  local logs
+  logs="$(tail -n 100 "$out" "$err" 2>/dev/null || true)"
+  
+  local code
+  code="$(echo "$logs" | grep -A2 'CODIGO DE PAREAMENTO\|CÓDIGO DE PAREAMENTO' | grep -E '║[[:space:]]+[A-Z0-9]{8}[[:space:]]+║' | sed 's/.*║[[:space:]]*\([A-Z0-9]\{8\}\)[[:space:]]*║.*/\1/' | tail -n 1 || true)"
+  
+  if [[ -z "$code" ]]; then
+    code="$(echo "$logs" | grep -oE '\b[A-Z0-9]{8}\b' | grep -v -E '^[0-9]{8}$' | grep -E '^[A-Z0-9]{8}$' | tail -n 1 || true)"
+  fi
+  
+  echo "$code"
+}
+
+check_connected_from_logs() {
+  local out="${LOG_OUT}"
+  local err="${LOG_ERR}"
+  local logs
+  logs="$(tail -n 50 "$out" "$err" 2>/dev/null || true)"
+  
+  if echo "$logs" | grep -qE 'Own LID session created|"msg":"connected"'; then
+    return 0
+  fi
+  return 1
+}
+
 start_bot() {
   ensure_installed
 
@@ -646,16 +674,16 @@ start_bot() {
     pm2 start "$PM2_NAME" >/dev/null 2>&1
   fi
 
-  sleep 1
+  sleep 2
   pm2 save >/dev/null 2>&1 || true
 
-  local start_ts last_code frames i log_line
+  local start_ts last_code frames i
   start_ts="$(date +%s)"
   last_code=""
   frames=("." ".." "..." "...." ".....")
   i=0
 
-  tail -n 0 -f "$LOG_OUT" "$LOG_ERR" 2>/dev/null | while IFS= read -r log_line; do
+  while true; do
     local now elapsed
     now="$(date +%s)"
     elapsed=$((now - start_ts))
@@ -663,45 +691,21 @@ start_bot() {
     if (( elapsed > 300 )); then
       echo
       echo -e "${YELLOW}Tempo limite atingido. Verifique os logs.${RESET}"
-      pkill -P $$ tail 2>/dev/null || true
-      break
+      pause
+      return 1
     fi
 
-    if echo "$log_line" | grep -qiE 'Own LID session created|session opened successfully|"msg":"connected"|ready|logged in'; then
-      echo
-      echo -e "${GREEN}${BOLD}Bot conectado com sucesso!${RESET}"
-      pm2 save >/dev/null 2>&1 || true
-      pkill -P $$ tail 2>/dev/null || true
-      break
-    fi
-
-    local code
-    code="$(echo "$log_line" | grep -Eo '[A-Z0-9]{4}-?[A-Z0-9]{4}|[A-Z0-9]{8}' | head -n 1 || true)"
-    if [[ -n "$code" && "$code" != "$last_code" && ${#code} -ge 8 ]]; then
-      last_code="$code"
-      clear_screen
-      show_pairing_code_box "$code"
-    fi
-  done &
-
-  local tail_pid=$!
-
-  while kill -0 "$tail_pid" 2>/dev/null; do
     local raw_st
     raw_st="$(pm2_status_raw)"
 
     if [[ "$raw_st" == "errored" || "$raw_st" == "ERRORED" ]]; then
-      kill "$tail_pid" 2>/dev/null || true
       echo
       echo -e "${RED}O processo entrou em ERRO. Verifique os logs.${RESET}"
       pause
       return 1
     fi
 
-    local wa_now
-    wa_now="$(whatsapp_state)"
-    if [[ "$wa_now" == "CONECTADO" ]]; then
-      kill "$tail_pid" 2>/dev/null || true
+    if check_connected_from_logs; then
       echo
       echo -e "${GREEN}${BOLD}Bot conectado com sucesso!${RESET}"
       pm2 save >/dev/null 2>&1 || true
@@ -709,12 +713,13 @@ start_bot() {
       return 0
     fi
 
-    local code_now
-    code_now="$(tail -n 50 "$LOG_OUT" "$LOG_ERR" 2>/dev/null | grep -Eo '[A-Z0-9]{4}-?[A-Z0-9]{4}|[A-Z0-9]{8}' | tail -n 1 || true)"
-    if [[ -n "$code_now" && "$code_now" != "$last_code" && ${#code_now} -ge 8 ]]; then
-      last_code="$code_now"
+    local code
+    code="$(extract_pairing_code_from_logs)"
+    
+    if [[ -n "$code" && ${#code} -eq 8 && "$code" != "$last_code" ]]; then
+      last_code="$code"
       clear_screen
-      show_pairing_code_box "$code_now"
+      show_pairing_code_box "$code"
     fi
 
     if [[ -n "$last_code" ]]; then
@@ -725,21 +730,7 @@ start_bot() {
 
     i=$(((i+1)%${#frames[@]}))
     sleep 1
-
-    local now elapsed
-    now="$(date +%s)"
-    elapsed=$((now - start_ts))
-    if (( elapsed > 300 )); then
-      kill "$tail_pid" 2>/dev/null || true
-      echo
-      echo -e "${YELLOW}Tempo limite atingido. Verifique os logs.${RESET}"
-      pause
-      return 1
-    fi
   done
-
-  wait "$tail_pid" 2>/dev/null || true
-  pause
 }
 
 stop_bot() {
