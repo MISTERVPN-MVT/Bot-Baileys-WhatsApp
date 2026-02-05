@@ -31,21 +31,27 @@ YELLOW=$'\e[33m'
 RED=$'\e[31m'
 ORANGE=$'\e[38;5;208m'
 
+BG_GREEN=$'\e[42m'
+BG_RED=$'\e[41m'
+BG_YELLOW=$'\e[43m'
+
 BORDER=$'\e[38;5;33m'
 TITLE_BG=$'\e[48;5;19m'
 INFO=$'\e[96m'
 MUTED=$'\e[90m'
 
-WIDTH=74
+BG_BLUE=$'\e[44m'
 
-BOX_TL="╭"
-BOX_TR="╮"
-BOX_BL="╰"
-BOX_BR="╯"
-BOX_H="─"
-BOX_V="│"
-BOX_ML="├"
-BOX_MR="┤"
+WIDTH=70
+
+BOX_TL="+"
+BOX_TR="+"
+BOX_BL="+"
+BOX_BR="+"
+BOX_H="-"
+BOX_V="|"
+BOX_ML="+"
+BOX_MR="+"
 
 cleanup_exit() {
   echo
@@ -91,7 +97,7 @@ repeat_char() {
 }
 
 strip_ansi() {
-  sed -E 's/\x1B\[[0-9;]*[mK]//g'
+  sed -r 's/\x1B\[[0-9;]*[mK]//g'
 }
 
 visible_len() {
@@ -163,11 +169,11 @@ spinner() {
   ("$@") >>"$log" 2>&1 &
   local pid=$!
 
-  local frames=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+  local frames=("*" "o" "O" "o")
   local i=0
 
   while kill -0 "$pid" 2>/dev/null; do
-    printf "\r${CYAN}%s${RESET} ${BORDER}%s${RESET}" "$label" "${frames[$i]}"
+    printf "\r${CYAN}%s${RESET} ${BLUE}%s${RESET}" "$label" "${frames[$i]}"
     i=$(((i+1)%${#frames[@]}))
     sleep 0.08
   done
@@ -271,7 +277,6 @@ pm2_configure_startup() {
 
 download_bot_zip() {
   mkdir -p "$APP_DIR"
-  rm -f "$ZIP_PATH" >/dev/null 2>&1 || true
   if command -v curl >/dev/null 2>&1; then
     spinner "Baixando bot (zip)" curl -fL "$BOT_ZIP_URL" -o "$ZIP_PATH"
   elif command -v wget >/dev/null 2>&1; then
@@ -285,27 +290,6 @@ download_bot_zip() {
 extract_bot_zip() {
   mkdir -p "$BOT_DIR"
   spinner "Extraindo bot" unzip -o "$ZIP_PATH" -d "$BOT_DIR"
-}
-
-normalize_bot_dir() {
-  if [[ -f "$BOT_DIR/package.json" ]]; then
-    return 0
-  fi
-
-  local d
-  d="$(find "$BOT_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -n 1 || true)"
-  if [[ -z "$d" ]]; then
-    return 0
-  fi
-
-  local dcount
-  dcount="$(find "$BOT_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')"
-  local fcount
-  fcount="$(find "$BOT_DIR" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')"
-
-  if [[ "$dcount" == "1" && "$fcount" == "0" && -f "$d/package.json" ]]; then
-    spinner "Ajustando estrutura do bot" bash -c "shopt -s dotglob nullglob; mv '$d'/* '$BOT_DIR'/; rmdir '$d' 2>/dev/null || true"
-  fi
 }
 
 bot_entrypoint() {
@@ -338,12 +322,12 @@ show_install_plan() {
   box_line "$BOX_ML" "$BOX_H" "$BOX_MR" "$BLUE"
 
   box_text "O que sera feito:" "$BLUE"
-  box_text "  • Baixar e extrair o bot (zip)" "$BLUE"
-  box_text "  • Instalar dependencias do sistema" "$BLUE"
-  box_text "  • Instalar Node.js (se necessario)" "$BLUE"
-  box_text "  • Instalar PM2 (se necessario)" "$BLUE"
-  box_text "  • npm install na pasta do bot" "$BLUE"
-  box_text "  • Configurar .env" "$BLUE"
+  box_text "  * Baixar e extrair o bot (zip)" "$BLUE"
+  box_text "  * Instalar dependencias do sistema" "$BLUE"
+  box_text "  * Instalar Node.js (se necessario)" "$BLUE"
+  box_text "  * Instalar PM2 (se necessario)" "$BLUE"
+  box_text "  * npm install na pasta do bot" "$BLUE"
+  box_text "  * Configurar .env" "$BLUE"
   box_line "$BOX_ML" "$BOX_H" "$BOX_MR" "$BLUE"
 
   local nodev npmv pm2v
@@ -391,7 +375,6 @@ configure_env_wizard() {
     "BOT_NUMBER"
     "APP_LINK"
     "MP_ACCESS_TOKEN"
-    "MP_WEBHOOK_URL"
     "TEST_MINUTES"
   )
 
@@ -449,15 +432,14 @@ first_run() {
   fi
   mkdir -p "$BOT_DIR"
   extract_bot_zip
-  normalize_bot_dir
 
   show_install_plan
   box_line "$BOX_TL" "$BOX_H" "$BOX_TR" "$BLUE"
   box_text "Dependencias do sistema" "$BLUE"
   box_line "$BOX_ML" "$BOX_H" "$BOX_MR" "$BLUE"
-  box_text "  • curl, ca-certificates, gnupg, unzip, git, build tools" "$BLUE"
-  box_text "  • Node.js 22 (se necessario)" "$BLUE"
-  box_text "  • PM2 (npm -g)" "$BLUE"
+  box_text "  * curl, ca-certificates, gnupg, unzip, git, build tools" "$BLUE"
+  box_text "  * Node.js 22 (se necessario)" "$BLUE"
+  box_text "  * PM2 (npm -g)" "$BLUE"
   box_line "$BOX_BL" "$BOX_H" "$BOX_BR" "$BLUE"
   echo
 
@@ -497,6 +479,11 @@ pm2_status_raw() {
   pm2 describe "$PM2_NAME" 2>/dev/null | awk -F: '/status/ {print $2; exit}' | xargs || true
 }
 
+pm2_field() {
+  local field="$1"
+  pm2 describe "$PM2_NAME" 2>/dev/null | awk -F: -v f="$field" '$1 ~ f {print $2; exit}' | xargs || true
+}
+
 pm2_pid() {
   command -v pm2 >/dev/null 2>&1 || { echo ""; return 0; }
   pm2 pid "$PM2_NAME" 2>/dev/null | tr -d ' ' || true
@@ -505,13 +492,6 @@ pm2_pid() {
 whatsapp_state() {
   local out="${LOG_OUT}"
   local err="${LOG_ERR}"
-
-  local raw_status
-  raw_status="$(pm2_status_raw)"
-  if [[ "$raw_status" != "online" && "$raw_status" != "ONLINE" ]]; then
-    echo "DESCONECTADO"
-    return 0
-  fi
 
   if [[ ! -f "$out" && ! -f "$err" ]]; then
     echo "DESCONHECIDO"
@@ -534,8 +514,9 @@ whatsapp_state() {
 }
 
 get_status_indicator() {
-  local wa="$1"
-
+  local raw="$1"
+  local wa="$2"
+  
   if [[ "$wa" == "CONECTADO" ]]; then
     echo -e "${GREEN}●${RESET}"
   elif [[ "$wa" == "CONECTANDO" ]]; then
@@ -549,14 +530,15 @@ render_header() {
   box_line "$BOX_TL" "$BOX_H" "$BOX_TR" "$BORDER"
   box_title "WPP BOT MANAGER v$VERSION" "$BORDER"
   box_text "$(center_text "Next-Generation WhatsApp Bot Management System" $((WIDTH-2)))" "$BORDER"
-  box_text "$(center_text "Author: MisterVPN (MISTERVPN-MVT)" $((WIDTH-2)))" "$BORDER"
+  box_text "$(center_text "Author: MisterVPN (@MISTERVPN)" $((WIDTH-2)))" "$BORDER"
   box_line "$BOX_BL" "$BOX_H" "$BOX_BR" "$BORDER"
 }
 
 render_status_panel() {
-  local wa indicator pid
+  local raw wa indicator pid
+  raw="$(pm2_status_raw)"
   wa="$(whatsapp_state)"
-  indicator="$(get_status_indicator "$wa")"
+  indicator="$(get_status_indicator "$raw" "$wa")"
   pid="$(pm2_pid)"
   [[ -z "$pid" || "$pid" == "0" ]] && pid="-"
 
@@ -577,7 +559,6 @@ render_menu() {
   box_text " ${INFO}[5]${RESET} ${WHITE}Monitorar Logs${RESET}" "$BORDER"
   box_text " ${INFO}[6]${RESET} ${WHITE}Verificar Instalacao${RESET}" "$BORDER"
   box_text " ${INFO}[7]${RESET} ${WHITE}Atualizar Dependencias${RESET}" "$BORDER"
-  box_text " ${INFO}[8]${RESET} ${WHITE}Deletar Script${RESET}" "$BORDER"
   box_text " ${RED}[0]${RESET} ${RED}Sair${RESET}" "$BORDER"
 
   box_line "$BOX_BL" "$BOX_H" "$BOX_BR" "$BORDER"
@@ -609,15 +590,15 @@ extract_pairing_code_from_logs() {
   local out="${LOG_OUT}"
   local err="${LOG_ERR}"
   local logs
-  logs="$(tail -n 120 "$out" "$err" 2>/dev/null || true)"
-
+  logs="$(tail -n 100 "$out" "$err" 2>/dev/null || true)"
+  
   local code
-  code="$(echo "$logs" | grep -A2 'CODIGO DE PAREAMENTO\|CÓDIGO DE PAREAMENTO' | grep -oE '\b[A-Z0-9]{8}\b' | tail -n 1 || true)"
-
+  code="$(echo "$logs" | grep -A2 'CODIGO DE PAREAMENTO\|CÓDIGO DE PAREAMENTO' | grep -E '║[[:space:]]+[A-Z0-9]{8}[[:space:]]+║' | sed 's/.*║[[:space:]]*\([A-Z0-9]\{8\}\)[[:space:]]*║.*/\1/' | tail -n 1 || true)"
+  
   if [[ -z "$code" ]]; then
-    code="$(echo "$logs" | grep -oE '\b[A-Z0-9]{8}\b' | grep -v -E '^[0-9]{8}$' | tail -n 1 || true)"
+    code="$(echo "$logs" | grep -oE '\b[A-Z0-9]{8}\b' | grep -v -E '^[0-9]{8}$' | grep -E '^[A-Z0-9]{8}$' | tail -n 1 || true)"
   fi
-
+  
   echo "$code"
 }
 
@@ -625,8 +606,8 @@ check_connected_from_logs() {
   local out="${LOG_OUT}"
   local err="${LOG_ERR}"
   local logs
-  logs="$(tail -n 80 "$out" "$err" 2>/dev/null || true)"
-
+  logs="$(tail -n 50 "$out" "$err" 2>/dev/null || true)"
+  
   if echo "$logs" | grep -qE 'Own LID session created|"msg":"connected"'; then
     return 0
   fi
@@ -717,7 +698,7 @@ start_bot() {
 
     local code
     code="$(extract_pairing_code_from_logs)"
-
+    
     if [[ -n "$code" && ${#code} -eq 8 && "$code" != "$last_code" ]]; then
       last_code="$code"
       clear_screen
@@ -783,7 +764,7 @@ monitor_logs() {
 
   clear_screen
   echo -e "${CYAN}${BOLD}Logs do bot (CTRL+C para voltar ao menu)${RESET}\n"
-
+  
   trap 'return 0' INT
   pm2 logs "$PM2_NAME" 2>/dev/null || true
   trap cleanup_exit INT TERM
@@ -814,7 +795,7 @@ check_npm_updates() {
   cd "$BOT_DIR" || return 1
 
   local outdated
-  outdated="$(npm outdated --long --parseable 2>/dev/null || true)"
+  outdated="$(npm outdated 2>/dev/null || true)"
 
   if [[ -z "$outdated" ]]; then
     echo -e "${GREEN}Todas as dependencias estao atualizadas!${RESET}"
@@ -822,24 +803,9 @@ check_npm_updates() {
     return 0
   fi
 
-  box_line "$BOX_TL" "$BOX_H" "$BOX_TR" "$BLUE"
-  box_text "Dependencias desatualizadas" "$BLUE"
-  box_line "$BOX_ML" "$BOX_H" "$BOX_MR" "$BLUE"
-  box_text "   Pacote            Atual     Desejado     Mais Recente " "$BLUE"
-  box_line "$BOX_ML" "$BOX_H" "$BOX_MR" "$BLUE"
-
-  while IFS= read -r line; do
-    [[ -z "$line" ]] && continue
-    IFS=':' read -r pkg cur want latest _ _ <<< "$line"
-    local name_fmt cur_fmt want_fmt latest_fmt
-    name_fmt="$(printf "%-16.16s" "$pkg")"
-    cur_fmt="$(printf "%-9.9s" "$cur")"
-    want_fmt="$(printf "%-11.11s" "$want")"
-    latest_fmt="$(printf "%-11.11s" "$latest")"
-    box_text "   ${CYAN}${name_fmt}${RESET}  ${YELLOW}${cur_fmt}${RESET}  ${GREEN}${want_fmt}${RESET}  ${GREEN}${latest_fmt}${RESET}" "$BLUE"
-  done <<< "$outdated"
-
-  box_line "$BOX_BL" "$BOX_H" "$BOX_BR" "$BLUE"
+  echo -e "${YELLOW}Dependencias com atualizacoes disponiveis:${RESET}"
+  echo
+  echo "$outdated"
   echo
 
   if ask_confirm "Deseja atualizar todas as dependencias?"; then
@@ -847,7 +813,7 @@ check_npm_updates() {
     spinner "Atualizando dependencias" npm update
     echo
     echo -e "${GREEN}${BOLD}Dependencias atualizadas com sucesso!${RESET}"
-
+    
     if pm2_exists; then
       echo
       if ask_confirm "Deseja reiniciar o bot para aplicar as atualizacoes?"; then
@@ -860,38 +826,6 @@ check_npm_updates() {
   fi
 
   pause
-}
-
-delete_script() {
-  clear_screen
-  echo -e "${RED}${BOLD}ATENCAO: Esta acao ira remover o script e todos os arquivos do bot.${RESET}"
-  echo -e "${DIM}Isso inclui o diretorio ${BOT_DIR}, o arquivo ${BIN_PATH} e o processo PM2.${RESET}"
-  echo
-  if ! ask_confirm "Deseja realmente continuar e excluir tudo?"; then
-    echo -e "${DIM}Remocao cancelada.${RESET}"
-    pause
-    return 0
-  fi
-
-  if pm2_exists; then
-    echo
-    spinner "Parando bot" pm2 stop "$PM2_NAME"
-    spinner "Removendo bot do PM2" pm2 delete "$PM2_NAME"
-    pm2 save >/dev/null 2>&1 || true
-  fi
-
-  if [[ -d "$APP_DIR" ]]; then
-    spinner "Removendo diretorio do bot" rm -rf "$APP_DIR"
-  fi
-
-  if [[ -f "$BIN_PATH" ]]; then
-    spinner "Removendo script" rm -f "$BIN_PATH"
-  fi
-
-  echo
-  echo -e "${GREEN}${BOLD}Script removido com sucesso.${RESET}"
-  echo -e "${DIM}Fechando...${RESET}"
-  exit 0
 }
 
 verify_installations() {
@@ -924,7 +858,7 @@ menu_loop() {
     echo
     render_menu
     echo
-    echo -ne "${BORDER}${BOLD}Selecione uma opcao [0-8]: ${RESET}"
+    echo -ne "${BORDER}${BOLD}Selecione uma opcao [0-7]: ${RESET}"
 
     local key=""
     read -rsn1 key || true
@@ -938,7 +872,6 @@ menu_loop() {
       5) monitor_logs ;;
       6) verify_installations ;;
       7) check_npm_updates ;;
-      8) delete_script ;;
       0) echo -e "${CYAN}Saindo...${RESET}"; exit 0 ;;
       *)
         echo -e "${YELLOW}Opcao invalida.${RESET}"
