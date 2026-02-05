@@ -1,6 +1,32 @@
 #!/usr/bin/env bash
 set -euo pipefail
 IFS=$'\n\t'
+RESET=$'\e[0m'
+BOLD=$'\e[1m'
+CYAN=$'\e[36m'
+GREEN=$'\e[32m'
+YELLOW=$'\e[33m'
+BLUE=$'\e[34m'
+
+# spinner function to animate long-running tasks
+spinner() {
+  local msg="$1"; local pid="$2"
+  local frames=('⠋' '⠙' '⠚' '⠒' '⠂' '⠂' '⠒' '⠑' '⠋')
+  local i=0
+  while kill -0 "$pid" 2>/dev/null; do
+    printf "\r${CYAN}%s ${BLUE}%s${RESET}" "$msg" "${frames[$i]}"
+    i=$(((i + 1) % ${#frames[@]}))
+    sleep 0.1
+  done
+  wait "$pid" || true
+  printf "\r${GREEN}%s OK${RESET}\n" "$msg"
+}
+
+header() {
+  echo -e "${BLUE}+----------------------------------------+${RESET}"
+  echo -e "${BLUE}|${RESET}${BOLD}${CYAN}         WPP Bot Installer        ${RESET}${BLUE}|${RESET}"
+  echo -e "${BLUE}+----------------------------------------+${RESET}"
+}
 
 # ==============================================================
 # Installer: WPP Bot Manager
@@ -37,10 +63,24 @@ need_root
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
 
-echo "Baixando WPP (CLI) ..."
-download "$REPO_RAW_BASE/wpp" "$tmp"
+header
+echo
 
-install -m 0755 "$tmp" "$BIN_PATH"
+# Baixar com animação
+(
+  download "$REPO_RAW_BASE/wpp" "$tmp"
+) &
+dlpid=$!
+spinner "Baixando WPP (CLI)" "$dlpid"
 
-echo "Instalado em: $BIN_PATH"
-echo "Agora execute: wpp"
+# Instalar com animação e pequena pausa para exibir animação
+(
+  install -m 0755 "$tmp" "$BIN_PATH"
+  # delay para tornar a animação visível
+  sleep 2
+) &
+instpid=$!
+spinner "Instalando WPP" "$instpid"
+
+echo -e "${GREEN}Instalado em: ${BIN_PATH}${RESET}"
+echo -e "${CYAN}Agora execute: ${BOLD}wpp${RESET}"
