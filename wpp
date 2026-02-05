@@ -31,27 +31,21 @@ YELLOW=$'\e[33m'
 RED=$'\e[31m'
 ORANGE=$'\e[38;5;208m'
 
-BG_GREEN=$'\e[42m'
-BG_RED=$'\e[41m'
-BG_YELLOW=$'\e[43m'
-
 BORDER=$'\e[38;5;33m'
 TITLE_BG=$'\e[48;5;19m'
 INFO=$'\e[96m'
 MUTED=$'\e[90m'
 
-BG_BLUE=$'\e[44m'
+WIDTH=74
 
-WIDTH=70
-
-BOX_TL="+"
-BOX_TR="+"
-BOX_BL="+"
-BOX_BR="+"
-BOX_H="-"
-BOX_V="|"
-BOX_ML="+"
-BOX_MR="+"
+BOX_TL="╭"
+BOX_TR="╮"
+BOX_BL="╰"
+BOX_BR="╯"
+BOX_H="─"
+BOX_V="│"
+BOX_ML="├"
+BOX_MR="┤"
 
 cleanup_exit() {
   echo
@@ -97,7 +91,7 @@ repeat_char() {
 }
 
 strip_ansi() {
-  sed -r 's/\x1B\[[0-9;]*[mK]//g'
+  sed -E 's/\x1B\[[0-9;]*[mK]//g'
 }
 
 visible_len() {
@@ -169,11 +163,11 @@ spinner() {
   ("$@") >>"$log" 2>&1 &
   local pid=$!
 
-  local frames=("*" "o" "O" "o")
+  local frames=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
   local i=0
 
   while kill -0 "$pid" 2>/dev/null; do
-    printf "\r${CYAN}%s${RESET} ${BLUE}%s${RESET}" "$label" "${frames[$i]}"
+    printf "\r${CYAN}%s${RESET} ${BORDER}%s${RESET}" "$label" "${frames[$i]}"
     i=$(((i+1)%${#frames[@]}))
     sleep 0.08
   done
@@ -277,6 +271,7 @@ pm2_configure_startup() {
 
 download_bot_zip() {
   mkdir -p "$APP_DIR"
+  rm -f "$ZIP_PATH" >/dev/null 2>&1 || true
   if command -v curl >/dev/null 2>&1; then
     spinner "Baixando bot (zip)" curl -fL "$BOT_ZIP_URL" -o "$ZIP_PATH"
   elif command -v wget >/dev/null 2>&1; then
@@ -290,6 +285,27 @@ download_bot_zip() {
 extract_bot_zip() {
   mkdir -p "$BOT_DIR"
   spinner "Extraindo bot" unzip -o "$ZIP_PATH" -d "$BOT_DIR"
+}
+
+normalize_bot_dir() {
+  if [[ -f "$BOT_DIR/package.json" ]]; then
+    return 0
+  fi
+
+  local d
+  d="$(find "$BOT_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -n 1 || true)"
+  if [[ -z "$d" ]]; then
+    return 0
+  fi
+
+  local dcount
+  dcount="$(find "$BOT_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')"
+  local fcount
+  fcount="$(find "$BOT_DIR" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')"
+
+  if [[ "$dcount" == "1" && "$fcount" == "0" && -f "$d/package.json" ]]; then
+    spinner "Ajustando estrutura do bot" bash -c "shopt -s dotglob nullglob; mv '$d'/* '$BOT_DIR'/; rmdir '$d' 2>/dev/null || true"
+  fi
 }
 
 bot_entrypoint() {
@@ -322,12 +338,12 @@ show_install_plan() {
   box_line "$BOX_ML" "$BOX_H" "$BOX_MR" "$BLUE"
 
   box_text "O que sera feito:" "$BLUE"
-  box_text "  * Baixar e extrair o bot (zip)" "$BLUE"
-  box_text "  * Instalar dependencias do sistema" "$BLUE"
-  box_text "  * Instalar Node.js (se necessario)" "$BLUE"
-  box_text "  * Instalar PM2 (se necessario)" "$BLUE"
-  box_text "  * npm install na pasta do bot" "$BLUE"
-  box_text "  * Configurar .env" "$BLUE"
+  box_text "  • Baixar e extrair o bot (zip)" "$BLUE"
+  box_text "  • Instalar dependencias do sistema" "$BLUE"
+  box_text "  • Instalar Node.js (se necessario)" "$BLUE"
+  box_text "  • Instalar PM2 (se necessario)" "$BLUE"
+  box_text "  • npm install na pasta do bot" "$BLUE"
+  box_text "  • Configurar .env" "$BLUE"
   box_line "$BOX_ML" "$BOX_H" "$BOX_MR" "$BLUE"
 
   local nodev npmv pm2v
@@ -433,14 +449,15 @@ first_run() {
   fi
   mkdir -p "$BOT_DIR"
   extract_bot_zip
+  normalize_bot_dir
 
   show_install_plan
   box_line "$BOX_TL" "$BOX_H" "$BOX_TR" "$BLUE"
   box_text "Dependencias do sistema" "$BLUE"
   box_line "$BOX_ML" "$BOX_H" "$BOX_MR" "$BLUE"
-  box_text "  * curl, ca-certificates, gnupg, unzip, git, build tools" "$BLUE"
-  box_text "  * Node.js 22 (se necessario)" "$BLUE"
-  box_text "  * PM2 (npm -g)" "$BLUE"
+  box_text "  • curl, ca-certificates, gnupg, unzip, git, build tools" "$BLUE"
+  box_text "  • Node.js 22 (se necessario)" "$BLUE"
+  box_text "  • PM2 (npm -g)" "$BLUE"
   box_line "$BOX_BL" "$BOX_H" "$BOX_BR" "$BLUE"
   echo
 
@@ -480,25 +497,15 @@ pm2_status_raw() {
   pm2 describe "$PM2_NAME" 2>/dev/null | awk -F: '/status/ {print $2; exit}' | xargs || true
 }
 
-pm2_field() {
-  local field="$1"
-  pm2 describe "$PM2_NAME" 2>/dev/null | awk -F: -v f="$field" '$1 ~ f {print $2; exit}' | xargs || true
-}
-
 pm2_pid() {
   command -v pm2 >/dev/null 2>&1 || { echo ""; return 0; }
   pm2 pid "$PM2_NAME" 2>/dev/null | tr -d ' ' || true
 }
 
 whatsapp_state() {
-  # Determine the WhatsApp connection state based on PM2 and log contents. If the
-  # underlying process is not running, always report as disconnected rather
-  # than relying on stale log entries. This prevents stale "online" status from
-  # persisting after the bot has been stopped via the menu.
   local out="${LOG_OUT}"
   local err="${LOG_ERR}"
 
-  # If PM2 is not running the process, return DESCONECTADO early.
   local raw_status
   raw_status="$(pm2_status_raw)"
   if [[ "$raw_status" != "online" && "$raw_status" != "ONLINE" ]]; then
@@ -506,36 +513,29 @@ whatsapp_state() {
     return 0
   fi
 
-  # If neither log exists yet, the state is unknown.
   if [[ ! -f "$out" && ! -f "$err" ]]; then
     echo "DESCONHECIDO"
     return 0
   fi
 
-  # Examine the last 200 lines of both stdout and stderr to determine status.
   local tail
   tail="$(tail -n 200 "$out" "$err" 2>/dev/null || true)"
 
-  # A line containing Own LID session created or msg:connected indicates a
-  # successful connection.
   if echo "$tail" | grep -qE 'Own LID session created|"msg":"connected"'; then
     echo "CONECTADO"
     return 0
   fi
-  # If a pairing code is present in the logs, we are still connecting.
   if echo "$tail" | grep -qE 'CODIGO DE PAREAMENTO|CÓDIGO DE PAREAMENTO'; then
     echo "CONECTANDO"
     return 0
   fi
 
-  # Default to disconnected.
   echo "DESCONECTADO"
 }
 
 get_status_indicator() {
-  local raw="$1"
-  local wa="$2"
-  
+  local wa="$1"
+
   if [[ "$wa" == "CONECTADO" ]]; then
     echo -e "${GREEN}●${RESET}"
   elif [[ "$wa" == "CONECTANDO" ]]; then
@@ -554,10 +554,9 @@ render_header() {
 }
 
 render_status_panel() {
-  local raw wa indicator pid
-  raw="$(pm2_status_raw)"
+  local wa indicator pid
   wa="$(whatsapp_state)"
-  indicator="$(get_status_indicator "$raw" "$wa")"
+  indicator="$(get_status_indicator "$wa")"
   pid="$(pm2_pid)"
   [[ -z "$pid" || "$pid" == "0" ]] && pid="-"
 
@@ -610,15 +609,15 @@ extract_pairing_code_from_logs() {
   local out="${LOG_OUT}"
   local err="${LOG_ERR}"
   local logs
-  logs="$(tail -n 100 "$out" "$err" 2>/dev/null || true)"
-  
+  logs="$(tail -n 120 "$out" "$err" 2>/dev/null || true)"
+
   local code
-  code="$(echo "$logs" | grep -A2 'CODIGO DE PAREAMENTO\|CÓDIGO DE PAREAMENTO' | grep -E '║[[:space:]]+[A-Z0-9]{8}[[:space:]]+║' | sed 's/.*║[[:space:]]*\([A-Z0-9]\{8\}\)[[:space:]]*║.*/\1/' | tail -n 1 || true)"
-  
+  code="$(echo "$logs" | grep -A2 'CODIGO DE PAREAMENTO\|CÓDIGO DE PAREAMENTO' | grep -oE '\b[A-Z0-9]{8}\b' | tail -n 1 || true)"
+
   if [[ -z "$code" ]]; then
-    code="$(echo "$logs" | grep -oE '\b[A-Z0-9]{8}\b' | grep -v -E '^[0-9]{8}$' | grep -E '^[A-Z0-9]{8}$' | tail -n 1 || true)"
+    code="$(echo "$logs" | grep -oE '\b[A-Z0-9]{8}\b' | grep -v -E '^[0-9]{8}$' | tail -n 1 || true)"
   fi
-  
+
   echo "$code"
 }
 
@@ -626,8 +625,8 @@ check_connected_from_logs() {
   local out="${LOG_OUT}"
   local err="${LOG_ERR}"
   local logs
-  logs="$(tail -n 50 "$out" "$err" 2>/dev/null || true)"
-  
+  logs="$(tail -n 80 "$out" "$err" 2>/dev/null || true)"
+
   if echo "$logs" | grep -qE 'Own LID session created|"msg":"connected"'; then
     return 0
   fi
@@ -718,7 +717,7 @@ start_bot() {
 
     local code
     code="$(extract_pairing_code_from_logs)"
-    
+
     if [[ -n "$code" && ${#code} -eq 8 && "$code" != "$last_code" ]]; then
       last_code="$code"
       clear_screen
@@ -775,7 +774,7 @@ restart_bot() {
 }
 
 monitor_logs() {
-  command -v pm2 >/dev>null 2>&1 || { echo -e "${RED}PM2 nao esta instalado.${RESET}"; pause; return 1; }
+  command -v pm2 >/dev/null 2>&1 || { echo -e "${RED}PM2 nao esta instalado.${RESET}"; pause; return 1; }
   if ! pm2_exists; then
     echo -e "${YELLOW}O bot ainda nao foi criado no PM2.${RESET}"
     pause
@@ -784,7 +783,7 @@ monitor_logs() {
 
   clear_screen
   echo -e "${CYAN}${BOLD}Logs do bot (CTRL+C para voltar ao menu)${RESET}\n"
-  
+
   trap 'return 0' INT
   pm2 logs "$PM2_NAME" 2>/dev/null || true
   trap cleanup_exit INT TERM
@@ -814,42 +813,32 @@ check_npm_updates() {
 
   cd "$BOT_DIR" || return 1
 
-  # Capture outdated dependencies. Use a parseable format so we can neatly
-  # display the results. The --long and --parseable flags output lines in the
-  # following colon-separated format:
-  #   <name>:<current>:<wanted>:<latest>:<type>:<location>
   local outdated
   outdated="$(npm outdated --long --parseable 2>/dev/null || true)"
 
-  # If no packages are outdated, inform the user and return.
   if [[ -z "$outdated" ]]; then
     echo -e "${GREEN}Todas as dependencias estao atualizadas!${RESET}"
     pause
     return 0
   fi
 
-  # Build a pretty table-like view using the existing box drawing functions. We
-  # construct a header and then iterate through each outdated line, splitting
-  # on colons. This makes it easier to identify which packages need updating
-  # and to which versions.
   box_line "$BOX_TL" "$BOX_H" "$BOX_TR" "$BLUE"
   box_text "Dependencias desatualizadas" "$BLUE"
   box_line "$BOX_ML" "$BOX_H" "$BOX_MR" "$BLUE"
-  box_text "   Pacote           Atual   Desejado  Mais Recente " "$BLUE"
+  box_text "   Pacote            Atual     Desejado     Mais Recente " "$BLUE"
   box_line "$BOX_ML" "$BOX_H" "$BOX_MR" "$BLUE"
+
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
-    IFS=':' read -r pkg cur want latest type loc <<< "$line"
-    local name_fmt
-    name_fmt="$(printf "%-15.15s" "$pkg")"
-    local cur_fmt
-    cur_fmt="$(printf "%-7.7s" "$cur")"
-    local want_fmt
-    want_fmt="$(printf "%-9.9s" "$want")"
-    local latest_fmt
+    IFS=':' read -r pkg cur want latest _ _ <<< "$line"
+    local name_fmt cur_fmt want_fmt latest_fmt
+    name_fmt="$(printf "%-16.16s" "$pkg")"
+    cur_fmt="$(printf "%-9.9s" "$cur")"
+    want_fmt="$(printf "%-11.11s" "$want")"
     latest_fmt="$(printf "%-11.11s" "$latest")"
-    box_text "   ${CYAN}${name_fmt}${RESET} ${YELLOW}${cur_fmt}${RESET} ${GREEN}${want_fmt}${RESET} ${GREEN}${latest_fmt}${RESET} " "$BLUE"
+    box_text "   ${CYAN}${name_fmt}${RESET}  ${YELLOW}${cur_fmt}${RESET}  ${GREEN}${want_fmt}${RESET}  ${GREEN}${latest_fmt}${RESET}" "$BLUE"
   done <<< "$outdated"
+
   box_line "$BOX_BL" "$BOX_H" "$BOX_BR" "$BLUE"
   echo
 
