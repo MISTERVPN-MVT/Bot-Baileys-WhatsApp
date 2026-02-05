@@ -4,7 +4,7 @@ IFS=$'\n\t'
 export LANG=C.UTF-8
 export LC_ALL=C.UTF-8
 
-VERSION="2.0.2"
+VERSION="2.0.4"
 APP_TITLE="WPP Bot Manager"
 PM2_NAME="wpp-bot"
 BOT_ZIP_URL="https://github.com/MISTERVPN-MVT/Bot-Baileys-WhatsApp/raw/refs/heads/main/bot-wpp-baileys.zip"
@@ -29,6 +29,7 @@ WHITE=$'\e[97m'
 GREEN=$'\e[32m'
 YELLOW=$'\e[33m'
 RED=$'\e[31m'
+ORANGE=$'\e[38;5;208m'
 
 BG_GREEN=$'\e[42m'
 BG_RED=$'\e[41m'
@@ -316,7 +317,7 @@ install_bot_deps() {
 show_install_plan() {
   clear_screen
   box_line "$BOX_TL" "$BOX_H" "$BOX_TR" "$BLUE"
-  box_text "$(center_text "$APP_TITLE" $((WIDTH-2)))" "$BLUE"
+  box_text "$(center_text "$APP_TITLE v$VERSION" $((WIDTH-2)))" "$BLUE"
   box_text "$(center_text "Instalacao inicial" $((WIDTH-2)))" "$BLUE"
   box_line "$BOX_ML" "$BOX_H" "$BOX_MR" "$BLUE"
 
@@ -506,62 +507,44 @@ whatsapp_state() {
     return 0
   fi
   if echo "$tail" | grep -qE 'CODIGO DE PAREAMENTO|CÓDIGO DE PAREAMENTO'; then
-    echo "PAREANDO"
+    echo "CONECTANDO"
     return 0
   fi
 
-  echo "DESCONHECIDO"
+  echo "DESCONECTADO"
 }
 
-status_badge() {
-  local st="$1"
-  case "$st" in
-    online|ONLINE)
-      echo -e "${GREEN}●${RESET} ${GREEN}ONLINE${RESET}"
-      ;;
-    stopped|STOPPED)
-      echo -e "${RED}●${RESET} ${RED}OFFLINE${RESET}"
-      ;;
-    errored|ERRORED)
-      echo -e "${RED}●${RESET} ${RED}ERRO${RESET}"
-      ;;
-    PM2_OFFLINE)
-      echo -e "${YELLOW}●${RESET} ${YELLOW}PM2 OFF${RESET}"
-      ;;
-    NOT_CREATED)
-      echo -e "${BLUE}●${RESET} ${BLUE}N/INIC${RESET}"
-      ;;
-    *)
-      echo -e "${YELLOW}●${RESET} ${YELLOW}${st^^}${RESET}"
-      ;;
-  esac
+get_status_indicator() {
+  local raw="$1"
+  local wa="$2"
+  
+  if [[ "$wa" == "CONECTADO" ]]; then
+    echo -e "${GREEN}●${RESET}"
+  elif [[ "$wa" == "CONECTANDO" ]]; then
+    echo -e "${ORANGE}●${RESET}"
+  else
+    echo -e "${RED}●${RESET}"
+  fi
 }
 
 render_header() {
   box_line "$BOX_TL" "$BOX_H" "$BOX_TR" "$BORDER"
-  box_title "WPP BOT MANAGER" "$BORDER"
+  box_title "WPP BOT MANAGER v$VERSION" "$BORDER"
   box_text "$(center_text "Next-Generation WhatsApp Bot Management System" $((WIDTH-2)))" "$BORDER"
   box_text "$(center_text "Author: MisterVPN (MISTERVPN-MVT)" $((WIDTH-2)))" "$BORDER"
   box_line "$BOX_BL" "$BOX_H" "$BOX_BR" "$BORDER"
 }
 
 render_status_panel() {
-  local raw wa badge
+  local raw wa indicator pid
   raw="$(pm2_status_raw)"
   wa="$(whatsapp_state)"
-  badge="$(status_badge "$raw")"
-
-  local mem="-" pid="-" pm2id="-"
-  if [[ "$raw" != "PM2_OFFLINE" && "$raw" != "NOT_CREATED" ]]; then
-    mem="$(pm2_field 'memory' || true)"; [[ -z "$mem" ]] && mem="-"
-    pid="$(pm2_pid)"; [[ -z "$pid" || "$pid" == "0" ]] && pid="-"
-    pm2id="$(pm2_field 'pm2 id' || true)"; [[ -z "$pm2id" ]] && pm2id="-"
-  fi
+  indicator="$(get_status_indicator "$raw" "$wa")"
+  pid="$(pm2_pid)"
+  [[ -z "$pid" || "$pid" == "0" ]] && pid="-"
 
   box_line "$BOX_TL" "$BOX_H" "$BOX_TR" "$BORDER"
-  box_text " ${BOLD}STATUS:${RESET} ${badge}  ${BOLD}WHATSAPP:${RESET} ${wa}  ${BOLD}ID:${RESET} ${pm2id}" "$BORDER"
-  box_text " ${INFO}RAM:${RESET} ${mem}  ${INFO}PID:${RESET} ${pid}" "$BORDER"
-  box_text " ${INFO}DIR:${RESET} ${BOT_DIR}" "$BORDER"
+  box_text " ${indicator} ${BOLD}${wa}${RESET}   ${DIM}PID:${RESET} ${pid}   ${DIM}DIR:${RESET} ${BOT_DIR}" "$BORDER"
   box_line "$BOX_BL" "$BOX_H" "$BOX_BR" "$BORDER"
 }
 
@@ -574,8 +557,9 @@ render_menu() {
   box_text " ${INFO}[2]${RESET} ${WHITE}Parar Bot${RESET}" "$BORDER"
   box_text " ${INFO}[3]${RESET} ${WHITE}Reiniciar Bot${RESET}" "$BORDER"
   box_text " ${INFO}[4]${RESET} ${WHITE}Configurar .env${RESET}" "$BORDER"
-  box_text " ${INFO}[5]${RESET} ${WHITE}Monitorar Logs (ao vivo)${RESET}" "$BORDER"
-  box_text " ${INFO}[6]${RESET} ${WHITE}Verificar / Reparar Instalacao${RESET}" "$BORDER"
+  box_text " ${INFO}[5]${RESET} ${WHITE}Monitorar Logs${RESET}" "$BORDER"
+  box_text " ${INFO}[6]${RESET} ${WHITE}Verificar Instalacao${RESET}" "$BORDER"
+  box_text " ${INFO}[7]${RESET} ${WHITE}Atualizar Dependencias${RESET}" "$BORDER"
   box_text " ${RED}[0]${RESET} ${RED}Sair${RESET}" "$BORDER"
 
   box_line "$BOX_BL" "$BOX_H" "$BOX_BR" "$BORDER"
@@ -780,12 +764,68 @@ monitor_logs() {
   fi
 
   clear_screen
-  echo -e "${CYAN}${BOLD}Logs do bot (CTRL+C para voltar)${RESET}\n"
-  pm2 logs "$PM2_NAME" || true
+  echo -e "${CYAN}${BOLD}Logs do bot (CTRL+C para voltar ao menu)${RESET}\n"
+  
+  trap 'return 0' INT
+  pm2 logs "$PM2_NAME" 2>/dev/null || true
+  trap cleanup_exit INT TERM
 }
 
 configure_env_menu() {
   configure_env_wizard
+  pause
+}
+
+check_npm_updates() {
+  if [[ ! -d "$BOT_DIR" ]]; then
+    echo -e "${RED}Diretorio do bot nao encontrado.${RESET}"
+    pause
+    return 1
+  fi
+
+  if [[ ! -f "$BOT_DIR/package.json" ]]; then
+    echo -e "${RED}package.json nao encontrado.${RESET}"
+    pause
+    return 1
+  fi
+
+  clear_screen
+  echo -e "${CYAN}${BOLD}Verificando atualizacoes de dependencias...${RESET}"
+  echo
+
+  cd "$BOT_DIR" || return 1
+
+  local outdated
+  outdated="$(npm outdated 2>/dev/null || true)"
+
+  if [[ -z "$outdated" ]]; then
+    echo -e "${GREEN}Todas as dependencias estao atualizadas!${RESET}"
+    pause
+    return 0
+  fi
+
+  echo -e "${YELLOW}Dependencias com atualizacoes disponiveis:${RESET}"
+  echo
+  echo "$outdated"
+  echo
+
+  if ask_confirm "Deseja atualizar todas as dependencias?"; then
+    echo
+    spinner "Atualizando dependencias" npm update
+    echo
+    echo -e "${GREEN}${BOLD}Dependencias atualizadas com sucesso!${RESET}"
+    
+    if pm2_exists; then
+      echo
+      if ask_confirm "Deseja reiniciar o bot para aplicar as atualizacoes?"; then
+        spinner "Reiniciando bot" pm2 restart "$PM2_NAME"
+        pm2 save >/dev/null 2>&1 || true
+      fi
+    fi
+  else
+    echo -e "${DIM}Atualizacao cancelada.${RESET}"
+  fi
+
   pause
 }
 
@@ -819,7 +859,7 @@ menu_loop() {
     echo
     render_menu
     echo
-    echo -ne "${BORDER}${BOLD}Selecione uma opcao [0-6]: ${RESET}"
+    echo -ne "${BORDER}${BOLD}Selecione uma opcao [0-7]: ${RESET}"
 
     local key=""
     read -rsn1 key || true
@@ -832,6 +872,7 @@ menu_loop() {
       4) configure_env_menu ;;
       5) monitor_logs ;;
       6) verify_installations ;;
+      7) check_npm_updates ;;
       0) echo -e "${CYAN}Saindo...${RESET}"; exit 0 ;;
       *)
         echo -e "${YELLOW}Opcao invalida.${RESET}"
