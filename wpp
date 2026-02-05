@@ -4,7 +4,7 @@ IFS=$'\n\t'
 export LANG=C.UTF-8
 export LC_ALL=C.UTF-8
 
-VERSION="1.0.6"
+VERSION="1.0.8"
 APP_TITLE="WPP Bot Manager"
 PM2_NAME="wpp-bot"
 BOT_ZIP_URL="https://github.com/MISTERVPN-MVT/Bot-Baileys-WhatsApp/raw/refs/heads/main/bot-wpp-baileys.zip"
@@ -52,15 +52,12 @@ BOX_V="|"
 BOX_ML="+"
 BOX_MR="+"
 
-_CANON_SAVED=""
-_ECHO_SAVED=""
-
-cleanup_tty() {
-  if [[ -n "${_CANON_SAVED}" || -n "${_ECHO_SAVED}" ]]; then
-    stty sane 2>/dev/null || true
-  fi
+cleanup_exit() {
+  echo
+  echo -e "${CYAN}Saindo...${RESET}"
+  exit 0
 }
-trap cleanup_tty EXIT INT TERM
+trap cleanup_exit INT TERM
 
 script_abs_path() {
   local p
@@ -504,12 +501,12 @@ whatsapp_state() {
   local tail
   tail="$(tail -n 200 "$out" "$err" 2>/dev/null || true)"
 
-  if echo "$tail" | grep -qiE 'pairing|pareamento|c[oó]digo'; then
-    echo "PAREANDO"
+  if echo "$tail" | grep -qiE 'Own LID session created|session opened successfully|connected|ready|logged in'; then
+    echo "CONECTADO"
     return 0
   fi
-  if echo "$tail" | grep -qiE 'connected|conectad|ready|logged in|connection open|opened|session opened'; then
-    echo "CONECTADO"
+  if echo "$tail" | grep -qiE 'pairing|pareamento|CODIGO DE PAREAMENTO'; then
+    echo "PAREANDO"
     return 0
   fi
 
@@ -520,22 +517,22 @@ status_badge() {
   local st="$1"
   case "$st" in
     online|ONLINE)
-      echo -e "${BG_GREEN}${BOLD}  ONLINE  ${RESET}"
+      echo -e "${BG_GREEN}${BOLD} ONLINE ${RESET}"
       ;;
     stopped|STOPPED)
-      echo -e "${BG_RED}${BOLD}  OFFLINE ${RESET}"
+      echo -e "${BG_RED}${BOLD} OFFLINE ${RESET}"
       ;;
     errored|ERRORED)
-      echo -e "${BG_RED}${BOLD}  ERRO    ${RESET}"
+      echo -e "${BG_RED}${BOLD} ERRO ${RESET}"
       ;;
     PM2_OFFLINE)
-      echo -e "${BG_YELLOW}${BOLD}  PM2 OFF ${RESET}"
+      echo -e "${BG_YELLOW}${BOLD} PM2 OFF ${RESET}"
       ;;
     NOT_CREATED)
-      echo -e "${BG_BLUE}${BOLD}  N/INIC  ${RESET}"
+      echo -e "${BG_BLUE}${BOLD} N/INIC ${RESET}"
       ;;
     *)
-      echo -e "${BG_YELLOW}${BOLD}  ${st^^}  ${RESET}"
+      echo -e "${BG_YELLOW}${BOLD} ${st^^} ${RESET}"
       ;;
   esac
 }
@@ -562,8 +559,9 @@ render_status_panel() {
   fi
 
   box_line "$BOX_TL" "$BOX_H" "$BOX_TR" "$BORDER"
-  box_text "$(pad_right "${BOLD}STATUS:${RESET} ${badge}   ${BOLD}WHATSAPP:${RESET} ${wa}   ${BOLD}ID:${RESET} ${pm2id}" $((WIDTH-2)))" "$BORDER"
-  box_text "$(pad_right "${INFO}RAM:${RESET} ${mem}   ${INFO}PID:${RESET} ${pid}   ${INFO}DIR:${RESET} ${BOT_DIR}" $((WIDTH-2)))" "$BORDER"
+  box_text " ${BOLD}STATUS:${RESET} ${badge}  ${BOLD}WHATSAPP:${RESET} ${wa}  ${BOLD}ID:${RESET} ${pm2id}" "$BORDER"
+  box_text " ${INFO}RAM:${RESET} ${mem}  ${INFO}PID:${RESET} ${pid}" "$BORDER"
+  box_text " ${INFO}DIR:${RESET} ${BOT_DIR}" "$BORDER"
   box_line "$BOX_BL" "$BOX_H" "$BOX_BR" "$BORDER"
 }
 
@@ -578,20 +576,18 @@ render_menu() {
   fi
 
   box_line "$BOX_TL" "$BOX_H" "$BOX_TR" "$BORDER"
-  box_text "$(center_text "${BOLD}MENU INICIAL${RESET}" $((WIDTH-2)))" "$BORDER"
+  box_text "$(center_text "${BOLD}MENU PRINCIPAL${RESET}" $((WIDTH-2)))" "$BORDER"
   box_line "$BOX_ML" "$BOX_H" "$BOX_MR" "$BORDER"
 
   box_text " ${start_label}" "$BORDER"
-  box_text " ${INFO}[2]${RESET} ${WHITE}Reiniciar Bot${RESET}" "$BORDER"
-  box_text " ${INFO}[3]${RESET} ${WHITE}Parar Bot${RESET}" "$BORDER"
+  box_text " ${INFO}[2]${RESET} ${WHITE}Parar Bot${RESET}" "$BORDER"
+  box_text " ${INFO}[3]${RESET} ${WHITE}Reiniciar Bot${RESET}" "$BORDER"
   box_text " ${INFO}[4]${RESET} ${WHITE}Configurar .env${RESET}" "$BORDER"
   box_text " ${INFO}[5]${RESET} ${WHITE}Monitorar Logs (ao vivo)${RESET}" "$BORDER"
   box_text " ${INFO}[6]${RESET} ${WHITE}Verificar / Reparar Instalacao${RESET}" "$BORDER"
   box_text " ${RED}[0]${RESET} ${RED}Sair${RESET}" "$BORDER"
 
   box_line "$BOX_BL" "$BOX_H" "$BOX_BR" "$BORDER"
-  echo ""
-  echo -ne "${BORDER}${BOLD}Selecione uma opcao [0-6]: ${RESET}"
 }
 
 ensure_installed() {
@@ -602,83 +598,37 @@ ensure_installed() {
 
 show_pairing_code_box() {
   local code="$1"
-  clear_screen
-
-  box_line "$BOX_TL" "$BOX_H" "$BOX_TR" "$BLUE"
-  box_text "$(center_text "CODIGO DE PAREAMENTO" $((WIDTH-2)))" "$BLUE"
-  box_line "$BOX_ML" "$BOX_H" "$BOX_MR" "$BLUE"
-  box_text "" "$BLUE"
-  box_text "$(center_text "$code" $((WIDTH-2)))" "$BLUE"
-  box_text "" "$BLUE"
-  box_line "$BOX_ML" "$BOX_H" "$BOX_MR" "$BLUE"
-  box_text "Abra o WhatsApp -> Dispositivos conectados -> Conectar" "$BLUE"
-  box_text "Cole/insira o codigo acima e aguarde finalizar." "$BLUE"
-  box_line "$BOX_BL" "$BOX_H" "$BOX_BR" "$BLUE"
+  echo
+  box_line "$BOX_TL" "$BOX_H" "$BOX_TR" "$CYAN"
+  box_text "$(center_text "CODIGO DE PAREAMENTO" $((WIDTH-2)))" "$CYAN"
+  box_line "$BOX_ML" "$BOX_H" "$BOX_MR" "$CYAN"
+  box_text "" "$CYAN"
+  box_text "$(center_text "${BOLD}${GREEN}$code${RESET}" $((WIDTH-2)))" "$CYAN"
+  box_text "" "$CYAN"
+  box_line "$BOX_ML" "$BOX_H" "$BOX_MR" "$CYAN"
+  box_text " Abra o WhatsApp -> Dispositivos conectados -> Conectar" "$CYAN"
+  box_text " Cole/insira o codigo acima e aguarde finalizar." "$CYAN"
+  box_line "$BOX_BL" "$BOX_H" "$BOX_BR" "$CYAN"
+  echo
 }
 
 extract_pairing_code_from_logs() {
   local out="${LOG_OUT}"
   local err="${LOG_ERR}"
   local tail
-  tail="$(tail -n 250 "$out" "$err" 2>/dev/null || true)"
-  echo "$tail" | grep -Eo '[A-Z0-9]{4}-[A-Z0-9]{4}|[0-9]{8}' | tail -n 1 || true
+  tail="$(tail -n 300 "$out" "$err" 2>/dev/null || true)"
+  echo "$tail" | grep -Eo '[A-Z0-9]{4}-?[A-Z0-9]{4}|[A-Z0-9]{8}' | tail -n 1 || true
 }
 
-wait_for_connection() {
-  local start_ts
-  start_ts="$(date +%s)"
-
-  local showed_code=0
-  local last_code=""
-
-  while true; do
-    local now
-    now="$(date +%s)"
-
-    if (( now - start_ts > 300 )); then
-      echo -e "${YELLOW}Tempo limite. Verifique os logs.${RESET}"
-      return 1
-    fi
-
-    local raw
-    raw="$(pm2_status_raw)"
-
-    if [[ "$raw" == "errored" || "$raw" == "ERRORED" ]]; then
-      echo -e "${RED}O processo entrou em ERRO. Abra os logs para detalhes.${RESET}"
-      return 1
-    fi
-
-    if [[ "$raw" != "online" && "$raw" != "ONLINE" ]]; then
-      sleep 1
-      continue
-    fi
-
-    local code
-    code="$(extract_pairing_code_from_logs)"
-    if [[ -n "$code" && "$code" != "$last_code" ]]; then
-      last_code="$code"
-      show_pairing_code_box "$code"
-      showed_code=1
-    fi
-
-    local wa
-    wa="$(whatsapp_state)"
-    if [[ "$wa" == "CONECTADO" ]]; then
-      if (( showed_code == 1 )); then
-        echo
-        echo -e "${GREEN}${BOLD}Conexao concluida com sucesso!${RESET}"
-      fi
-      return 0
-    fi
-
-    if (( showed_code == 1 )); then
-      echo -ne "\r${CYAN}Aguardando conexao...${RESET} ${DIM}(logs em tempo real)${RESET}"
-      sleep 2
-    else
-      echo -ne "\r${CYAN}Iniciando conexao do bot...${RESET} ${BLUE}*${RESET}"
-      sleep 1
-    fi
-  done
+check_connected_from_logs() {
+  local out="${LOG_OUT}"
+  local err="${LOG_ERR}"
+  local tail
+  tail="$(tail -n 100 "$out" "$err" 2>/dev/null || true)"
+  if echo "$tail" | grep -qiE 'Own LID session created|session opened successfully|connected|ready|logged in'; then
+    return 0
+  fi
+  return 1
 }
 
 start_bot() {
@@ -686,6 +636,7 @@ start_bot() {
 
   command -v pm2 >/dev/null 2>&1 || {
     echo -e "${RED}PM2 nao esta instalado.${RESET}"
+    pause
     return 1
   }
 
@@ -694,43 +645,101 @@ start_bot() {
 
   if [[ "$raw" == "online" || "$raw" == "ONLINE" ]]; then
     echo -e "${YELLOW}O bot ja esta em execucao.${RESET}"
+    pause
     return 0
   fi
+
+  clear_screen
+  echo
+  echo -e "${CYAN}${BOLD}Iniciando Bot...${RESET}"
+  echo
 
   local ep
   ep="$(bot_entrypoint)"
 
   if ! pm2_exists; then
     if [[ "$ep" == "npm" ]]; then
-      spinner "Criando processo PM2" bash -c "cd '$BOT_DIR' && pm2 start npm --name '$PM2_NAME' -- start"
+      (cd "$BOT_DIR" && pm2 start npm --name "$PM2_NAME" -- start) >/dev/null 2>&1 &
     elif [[ -n "$ep" ]]; then
-      spinner "Criando processo PM2" pm2 start "$ep" --name "$PM2_NAME"
+      pm2 start "$ep" --name "$PM2_NAME" >/dev/null 2>&1 &
     else
       echo -e "${RED}Nao consegui detectar o entrypoint do bot.${RESET}"
-      echo -e "${DIM}Procure por src/index.js ou package.json com script start.${RESET}"
+      pause
       return 1
     fi
   else
-    spinner "Iniciando PM2" pm2 start "$PM2_NAME"
+    pm2 start "$PM2_NAME" >/dev/null 2>&1 &
   fi
 
+  sleep 2
   pm2 save >/dev/null 2>&1 || true
 
-  echo
-  wait_for_connection || true
-  echo
-  pause
+  local start_ts last_code frames i
+  start_ts="$(date +%s)"
+  last_code=""
+  frames=("." ".." "..." "...." ".....")
+  i=0
+
+  while true; do
+    local now elapsed
+    now="$(date +%s)"
+    elapsed=$((now - start_ts))
+
+    if (( elapsed > 300 )); then
+      echo
+      echo -e "${YELLOW}Tempo limite atingido. Verifique os logs.${RESET}"
+      pause
+      return 1
+    fi
+
+    local raw_st
+    raw_st="$(pm2_status_raw)"
+
+    if [[ "$raw_st" == "errored" || "$raw_st" == "ERRORED" ]]; then
+      echo
+      echo -e "${RED}O processo entrou em ERRO. Verifique os logs.${RESET}"
+      pause
+      return 1
+    fi
+
+    if check_connected_from_logs; then
+      echo
+      echo -e "${GREEN}${BOLD}Bot conectado com sucesso!${RESET}"
+      pm2 save >/dev/null 2>&1 || true
+      pause
+      return 0
+    fi
+
+    local code
+    code="$(extract_pairing_code_from_logs)"
+    if [[ -n "$code" && "$code" != "$last_code" ]]; then
+      last_code="$code"
+      clear_screen
+      show_pairing_code_box "$code"
+    fi
+
+    if [[ -n "$last_code" ]]; then
+      printf "\r${CYAN}Aguardando conexao${frames[$i]}${RESET}   "
+    else
+      printf "\r${CYAN}Aguardando codigo de pareamento${frames[$i]}${RESET}   "
+    fi
+
+    i=$(((i+1)%${#frames[@]}))
+    sleep 1
+  done
 }
 
 stop_bot() {
-  command -v pm2 >/dev/null 2>&1 || { echo -e "${RED}PM2 nao esta instalado.${RESET}"; return 1; }
+  command -v pm2 >/dev/null 2>&1 || { echo -e "${RED}PM2 nao esta instalado.${RESET}"; pause; return 1; }
   if ! pm2_exists; then
     echo -e "${YELLOW}O bot ainda nao foi iniciado no PM2.${RESET}"
+    pause
     return 0
   fi
 
   if ! ask_confirm "Confirma parar o bot?"; then
     echo -e "${DIM}Acao cancelada.${RESET}"
+    pause
     return 0
   fi
 
@@ -740,14 +749,16 @@ stop_bot() {
 }
 
 restart_bot() {
-  command -v pm2 >/dev/null 2>&1 || { echo -e "${RED}PM2 nao esta instalado.${RESET}"; return 1; }
+  command -v pm2 >/dev/null 2>&1 || { echo -e "${RED}PM2 nao esta instalado.${RESET}"; pause; return 1; }
   if ! pm2_exists; then
     echo -e "${YELLOW}O bot ainda nao foi criado no PM2. Use Iniciar.${RESET}"
+    pause
     return 0
   fi
 
   if ! ask_confirm "Confirma reiniciar o bot?"; then
     echo -e "${DIM}Acao cancelada.${RESET}"
+    pause
     return 0
   fi
 
@@ -757,7 +768,7 @@ restart_bot() {
 }
 
 monitor_logs() {
-  command -v pm2 >/dev/null 2>&1 || { echo -e "${RED}PM2 nao esta instalado.${RESET}"; return 1; }
+  command -v pm2 >/dev/null 2>&1 || { echo -e "${RED}PM2 nao esta instalado.${RESET}"; pause; return 1; }
   if ! pm2_exists; then
     echo -e "${YELLOW}O bot ainda nao foi criado no PM2.${RESET}"
     pause
@@ -766,34 +777,18 @@ monitor_logs() {
 
   clear_screen
   echo -e "${CYAN}${BOLD}Logs do bot (CTRL+C para voltar)${RESET}\n"
-  pm2 logs "$PM2_NAME"
+  pm2 logs "$PM2_NAME" || true
 }
 
-optimize_system() {
-  echo -e "${CYAN}${BOLD}Otimizacao:${RESET}"
-  echo -e "${DIM}  * Limpar logs do PM2\n  * Limpar cache do npm\n  * Autoremove (se apt)${RESET}"
-  echo
-
-  if ! ask_confirm "Confirmar otimizacao?"; then
-    echo -e "${DIM}Acao cancelada.${RESET}"
-    pause
-    return 0
-  fi
-
-  command -v pm2 >/dev/null 2>&1 && spinner "Limpando logs PM2" pm2 flush || true
-  command -v npm >/dev/null 2>&1 && spinner "Limpando cache npm" npm cache clean --force || true
-
-  if [[ "$(get_pkg_mgr)" == "apt" ]]; then
-    spinner "Autoremove (APT)" apt-get autoremove -y || true
-  fi
-
-  echo -e "${GREEN}Concluido.${RESET}"
+configure_env_menu() {
+  configure_env_wizard
   pause
 }
 
 verify_installations() {
   clear_screen
   render_header
+  echo
 
   box_line "$BOX_TL" "$BOX_H" "$BOX_TR" "$BLUE"
   box_text "$(center_text "VERIFICACAO" $((WIDTH-2)))" "$BLUE"
@@ -807,7 +802,7 @@ verify_installations() {
   box_line "$BOX_BL" "$BOX_H" "$BOX_BR" "$BLUE"
 
   echo
-  echo -e "${DIM}Ultimo log de acao (se existir): ${APP_DIR}/.wpp_last_action.log${RESET}"
+  echo -e "${DIM}Ultimo log de acao: ${APP_DIR}/.wpp_last_action.log${RESET}"
   pause
 }
 
@@ -819,28 +814,24 @@ menu_loop() {
     render_status_panel
     echo
     render_menu
-
     echo
-    echo -ne "${WHITE}${BOLD}Opcao:${RESET} "
+    echo -ne "${BORDER}${BOLD}Selecione uma opcao [0-6]: ${RESET}"
 
     local key=""
-    if read -rsn1 -t 2 key; then
-      echo
-    else
-      continue
-    fi
+    read -rsn1 key || true
+    echo
 
     case "$key" in
       1) start_bot ;;
       2) stop_bot ;;
       3) restart_bot ;;
-      4) monitor_logs ;;
-      5) optimize_system ;;
+      4) configure_env_menu ;;
+      5) monitor_logs ;;
       6) verify_installations ;;
-      0) exit 0 ;;
+      0) echo -e "${CYAN}Saindo...${RESET}"; exit 0 ;;
       *)
         echo -e "${YELLOW}Opcao invalida.${RESET}"
-        sleep 0.7
+        sleep 0.5
         ;;
     esac
   done
