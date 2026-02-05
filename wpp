@@ -4,7 +4,7 @@ IFS=$'\n\t'
 export LANG=C.UTF-8
 export LC_ALL=C.UTF-8
 
-VERSION="1.0.8"
+VERSION="2.0.0"
 APP_TITLE="WPP Bot Manager"
 PM2_NAME="wpp-bot"
 BOT_ZIP_URL="https://github.com/MISTERVPN-MVT/Bot-Baileys-WhatsApp/raw/refs/heads/main/bot-wpp-baileys.zip"
@@ -517,22 +517,22 @@ status_badge() {
   local st="$1"
   case "$st" in
     online|ONLINE)
-      echo -e "${BG_GREEN}${BOLD} ONLINE ${RESET}"
+      echo -e "${GREEN}●${RESET} ${GREEN}ONLINE${RESET}"
       ;;
     stopped|STOPPED)
-      echo -e "${BG_RED}${BOLD} OFFLINE ${RESET}"
+      echo -e "${RED}●${RESET} ${RED}OFFLINE${RESET}"
       ;;
     errored|ERRORED)
-      echo -e "${BG_RED}${BOLD} ERRO ${RESET}"
+      echo -e "${RED}●${RESET} ${RED}ERRO${RESET}"
       ;;
     PM2_OFFLINE)
-      echo -e "${BG_YELLOW}${BOLD} PM2 OFF ${RESET}"
+      echo -e "${YELLOW}●${RESET} ${YELLOW}PM2 OFF${RESET}"
       ;;
     NOT_CREATED)
-      echo -e "${BG_BLUE}${BOLD} N/INIC ${RESET}"
+      echo -e "${BLUE}●${RESET} ${BLUE}N/INIC${RESET}"
       ;;
     *)
-      echo -e "${BG_YELLOW}${BOLD} ${st^^} ${RESET}"
+      echo -e "${YELLOW}●${RESET} ${YELLOW}${st^^}${RESET}"
       ;;
   esac
 }
@@ -566,20 +566,11 @@ render_status_panel() {
 }
 
 render_menu() {
-  local raw wa
-  raw="$(pm2_status_raw)"
-  wa="$(whatsapp_state)"
-
-  local start_label="${INFO}[1]${RESET} ${WHITE}Iniciar Bot${RESET}"
-  if [[ "$raw" == "online" || "$raw" == "ONLINE" || "$wa" == "CONECTADO" ]]; then
-    start_label="${MUTED}[1]${RESET} ${MUTED}Iniciar Bot (indisponivel)${RESET}"
-  fi
-
   box_line "$BOX_TL" "$BOX_H" "$BOX_TR" "$BORDER"
   box_text "$(center_text "${BOLD}MENU PRINCIPAL${RESET}" $((WIDTH-2)))" "$BORDER"
   box_line "$BOX_ML" "$BOX_H" "$BOX_MR" "$BORDER"
 
-  box_text " ${start_label}" "$BORDER"
+  box_text " ${INFO}[1]${RESET} ${WHITE}Iniciar Bot${RESET}" "$BORDER"
   box_text " ${INFO}[2]${RESET} ${WHITE}Parar Bot${RESET}" "$BORDER"
   box_text " ${INFO}[3]${RESET} ${WHITE}Reiniciar Bot${RESET}" "$BORDER"
   box_text " ${INFO}[4]${RESET} ${WHITE}Configurar .env${RESET}" "$BORDER"
@@ -612,25 +603,6 @@ show_pairing_code_box() {
   echo
 }
 
-extract_pairing_code_from_logs() {
-  local out="${LOG_OUT}"
-  local err="${LOG_ERR}"
-  local tail
-  tail="$(tail -n 300 "$out" "$err" 2>/dev/null || true)"
-  echo "$tail" | grep -Eo '[A-Z0-9]{4}-?[A-Z0-9]{4}|[A-Z0-9]{8}' | tail -n 1 || true
-}
-
-check_connected_from_logs() {
-  local out="${LOG_OUT}"
-  local err="${LOG_ERR}"
-  local tail
-  tail="$(tail -n 100 "$out" "$err" 2>/dev/null || true)"
-  if echo "$tail" | grep -qiE 'Own LID session created|session opened successfully|connected|ready|logged in'; then
-    return 0
-  fi
-  return 1
-}
-
 start_bot() {
   ensure_installed
 
@@ -657,30 +629,33 @@ start_bot() {
   local ep
   ep="$(bot_entrypoint)"
 
+  : > "$LOG_OUT" 2>/dev/null || true
+  : > "$LOG_ERR" 2>/dev/null || true
+
   if ! pm2_exists; then
     if [[ "$ep" == "npm" ]]; then
-      (cd "$BOT_DIR" && pm2 start npm --name "$PM2_NAME" -- start) >/dev/null 2>&1 &
+      (cd "$BOT_DIR" && pm2 start npm --name "$PM2_NAME" -- start) >/dev/null 2>&1
     elif [[ -n "$ep" ]]; then
-      pm2 start "$ep" --name "$PM2_NAME" >/dev/null 2>&1 &
+      pm2 start "$ep" --name "$PM2_NAME" >/dev/null 2>&1
     else
       echo -e "${RED}Nao consegui detectar o entrypoint do bot.${RESET}"
       pause
       return 1
     fi
   else
-    pm2 start "$PM2_NAME" >/dev/null 2>&1 &
+    pm2 start "$PM2_NAME" >/dev/null 2>&1
   fi
 
-  sleep 2
+  sleep 1
   pm2 save >/dev/null 2>&1 || true
 
-  local start_ts last_code frames i
+  local start_ts last_code frames i log_line
   start_ts="$(date +%s)"
   last_code=""
   frames=("." ".." "..." "...." ".....")
   i=0
 
-  while true; do
+  tail -n 0 -f "$LOG_OUT" "$LOG_ERR" 2>/dev/null | while IFS= read -r log_line; do
     local now elapsed
     now="$(date +%s)"
     elapsed=$((now - start_ts))
@@ -688,21 +663,45 @@ start_bot() {
     if (( elapsed > 300 )); then
       echo
       echo -e "${YELLOW}Tempo limite atingido. Verifique os logs.${RESET}"
-      pause
-      return 1
+      pkill -P $$ tail 2>/dev/null || true
+      break
     fi
 
+    if echo "$log_line" | grep -qiE 'Own LID session created|session opened successfully|"msg":"connected"|ready|logged in'; then
+      echo
+      echo -e "${GREEN}${BOLD}Bot conectado com sucesso!${RESET}"
+      pm2 save >/dev/null 2>&1 || true
+      pkill -P $$ tail 2>/dev/null || true
+      break
+    fi
+
+    local code
+    code="$(echo "$log_line" | grep -Eo '[A-Z0-9]{4}-?[A-Z0-9]{4}|[A-Z0-9]{8}' | head -n 1 || true)"
+    if [[ -n "$code" && "$code" != "$last_code" && ${#code} -ge 8 ]]; then
+      last_code="$code"
+      clear_screen
+      show_pairing_code_box "$code"
+    fi
+  done &
+
+  local tail_pid=$!
+
+  while kill -0 "$tail_pid" 2>/dev/null; do
     local raw_st
     raw_st="$(pm2_status_raw)"
 
     if [[ "$raw_st" == "errored" || "$raw_st" == "ERRORED" ]]; then
+      kill "$tail_pid" 2>/dev/null || true
       echo
       echo -e "${RED}O processo entrou em ERRO. Verifique os logs.${RESET}"
       pause
       return 1
     fi
 
-    if check_connected_from_logs; then
+    local wa_now
+    wa_now="$(whatsapp_state)"
+    if [[ "$wa_now" == "CONECTADO" ]]; then
+      kill "$tail_pid" 2>/dev/null || true
       echo
       echo -e "${GREEN}${BOLD}Bot conectado com sucesso!${RESET}"
       pm2 save >/dev/null 2>&1 || true
@@ -710,23 +709,37 @@ start_bot() {
       return 0
     fi
 
-    local code
-    code="$(extract_pairing_code_from_logs)"
-    if [[ -n "$code" && "$code" != "$last_code" ]]; then
-      last_code="$code"
+    local code_now
+    code_now="$(tail -n 50 "$LOG_OUT" "$LOG_ERR" 2>/dev/null | grep -Eo '[A-Z0-9]{4}-?[A-Z0-9]{4}|[A-Z0-9]{8}' | tail -n 1 || true)"
+    if [[ -n "$code_now" && "$code_now" != "$last_code" && ${#code_now} -ge 8 ]]; then
+      last_code="$code_now"
       clear_screen
-      show_pairing_code_box "$code"
+      show_pairing_code_box "$code_now"
     fi
 
     if [[ -n "$last_code" ]]; then
-      printf "\r${CYAN}Aguardando conexao${frames[$i]}${RESET}   "
+      printf "\r${CYAN}Aguardando conexao${frames[$i]}${RESET}     "
     else
-      printf "\r${CYAN}Aguardando codigo de pareamento${frames[$i]}${RESET}   "
+      printf "\r${CYAN}Aguardando codigo de pareamento${frames[$i]}${RESET}     "
     fi
 
     i=$(((i+1)%${#frames[@]}))
     sleep 1
+
+    local now elapsed
+    now="$(date +%s)"
+    elapsed=$((now - start_ts))
+    if (( elapsed > 300 )); then
+      kill "$tail_pid" 2>/dev/null || true
+      echo
+      echo -e "${YELLOW}Tempo limite atingido. Verifique os logs.${RESET}"
+      pause
+      return 1
+    fi
   done
+
+  wait "$tail_pid" 2>/dev/null || true
+  pause
 }
 
 stop_bot() {
