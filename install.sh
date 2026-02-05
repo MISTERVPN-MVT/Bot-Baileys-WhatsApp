@@ -1,3 +1,4 @@
+# Author: @MISTERVPN
 #!/usr/bin/env bash
 set -euo pipefail
 IFS=$'\n\t'
@@ -8,7 +9,6 @@ GREEN=$'\e[32m'
 YELLOW=$'\e[33m'
 BLUE=$'\e[34m'
 
-# spinner function to animate long-running tasks
 spinner() {
   local msg="$1"; local pid="$2"
   local frames=('⠋' '⠙' '⠚' '⠒' '⠂' '⠂' '⠒' '⠑' '⠋')
@@ -27,12 +27,6 @@ header() {
   echo -e "${BLUE}|${RESET}${BOLD}${CYAN}         WPP Bot Installer        ${RESET}${BLUE}|${RESET}"
   echo -e "${BLUE}+----------------------------------------+${RESET}"
 }
-
-# ==============================================================
-# Installer: WPP Bot Manager
-# Usage:
-#   bash <(curl -fsSL <RAW_URL>/install.sh)
-# ==============================================================
 
 REPO_RAW_BASE_DEFAULT="https://raw.githubusercontent.com/MISTERVPN-MVT/Bot-Baileys-WhatsApp/main"
 REPO_RAW_BASE="${REPO_RAW_BASE:-$REPO_RAW_BASE_DEFAULT}"
@@ -66,17 +60,14 @@ trap 'rm -f "$tmp"' EXIT
 header
 echo
 
-# Baixar com animação
 (
   download "$REPO_RAW_BASE/wpp" "$tmp"
 ) &
 dlpid=$!
 spinner "Baixando WPP (CLI)" "$dlpid"
 
-# Instalar com animação e pequena pausa para exibir animação
 (
   install -m 0755 "$tmp" "$BIN_PATH"
-  # delay para tornar a animação visível
   sleep 2
 ) &
 instpid=$!
