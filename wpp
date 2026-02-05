@@ -4,7 +4,7 @@ IFS=$'\n\t'
 export LANG=C.UTF-8
 export LC_ALL=C.UTF-8
 
-VERSION="2.0.4"
+VERSION="2.0.6"
 APP_TITLE="WPP Bot Manager"
 PM2_NAME="wpp-bot"
 BOT_ZIP_URL="https://github.com/MISTERVPN-MVT/Bot-Baileys-WhatsApp/raw/refs/heads/main/bot-wpp-baileys.zip"
@@ -491,26 +491,44 @@ pm2_pid() {
 }
 
 whatsapp_state() {
+  # Determine the WhatsApp connection state based on PM2 and log contents. If the
+  # underlying process is not running, always report as disconnected rather
+  # than relying on stale log entries. This prevents stale "online" status from
+  # persisting after the bot has been stopped via the menu.
   local out="${LOG_OUT}"
   local err="${LOG_ERR}"
 
+  # If PM2 is not running the process, return DESCONECTADO early.
+  local raw_status
+  raw_status="$(pm2_status_raw)"
+  if [[ "$raw_status" != "online" && "$raw_status" != "ONLINE" ]]; then
+    echo "DESCONECTADO"
+    return 0
+  fi
+
+  # If neither log exists yet, the state is unknown.
   if [[ ! -f "$out" && ! -f "$err" ]]; then
     echo "DESCONHECIDO"
     return 0
   fi
 
+  # Examine the last 200 lines of both stdout and stderr to determine status.
   local tail
   tail="$(tail -n 200 "$out" "$err" 2>/dev/null || true)"
 
+  # A line containing Own LID session created or msg:connected indicates a
+  # successful connection.
   if echo "$tail" | grep -qE 'Own LID session created|"msg":"connected"'; then
     echo "CONECTADO"
     return 0
   fi
+  # If a pairing code is present in the logs, we are still connecting.
   if echo "$tail" | grep -qE 'CODIGO DE PAREAMENTO|CÓDIGO DE PAREAMENTO'; then
     echo "CONECTANDO"
     return 0
   fi
 
+  # Default to disconnected.
   echo "DESCONECTADO"
 }
 
@@ -560,6 +578,7 @@ render_menu() {
   box_text " ${INFO}[5]${RESET} ${WHITE}Monitorar Logs${RESET}" "$BORDER"
   box_text " ${INFO}[6]${RESET} ${WHITE}Verificar Instalacao${RESET}" "$BORDER"
   box_text " ${INFO}[7]${RESET} ${WHITE}Atualizar Dependencias${RESET}" "$BORDER"
+  box_text " ${INFO}[8]${RESET} ${WHITE}Deletar Script${RESET}" "$BORDER"
   box_text " ${RED}[0]${RESET} ${RED}Sair${RESET}" "$BORDER"
 
   box_line "$BOX_BL" "$BOX_H" "$BOX_BR" "$BORDER"
@@ -756,7 +775,7 @@ restart_bot() {
 }
 
 monitor_logs() {
-  command -v pm2 >/dev/null 2>&1 || { echo -e "${RED}PM2 nao esta instalado.${RESET}"; pause; return 1; }
+  command -v pm2 >/dev>null 2>&1 || { echo -e "${RED}PM2 nao esta instalado.${RESET}"; pause; return 1; }
   if ! pm2_exists; then
     echo -e "${YELLOW}O bot ainda nao foi criado no PM2.${RESET}"
     pause
@@ -795,18 +814,43 @@ check_npm_updates() {
 
   cd "$BOT_DIR" || return 1
 
+  # Capture outdated dependencies. Use a parseable format so we can neatly
+  # display the results. The --long and --parseable flags output lines in the
+  # following colon-separated format:
+  #   <name>:<current>:<wanted>:<latest>:<type>:<location>
   local outdated
-  outdated="$(npm outdated 2>/dev/null || true)"
+  outdated="$(npm outdated --long --parseable 2>/dev/null || true)"
 
+  # If no packages are outdated, inform the user and return.
   if [[ -z "$outdated" ]]; then
     echo -e "${GREEN}Todas as dependencias estao atualizadas!${RESET}"
     pause
     return 0
   fi
 
-  echo -e "${YELLOW}Dependencias com atualizacoes disponiveis:${RESET}"
-  echo
-  echo "$outdated"
+  # Build a pretty table-like view using the existing box drawing functions. We
+  # construct a header and then iterate through each outdated line, splitting
+  # on colons. This makes it easier to identify which packages need updating
+  # and to which versions.
+  box_line "$BOX_TL" "$BOX_H" "$BOX_TR" "$BLUE"
+  box_text "Dependencias desatualizadas" "$BLUE"
+  box_line "$BOX_ML" "$BOX_H" "$BOX_MR" "$BLUE"
+  box_text "   Pacote           Atual   Desejado  Mais Recente " "$BLUE"
+  box_line "$BOX_ML" "$BOX_H" "$BOX_MR" "$BLUE"
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    IFS=':' read -r pkg cur want latest type loc <<< "$line"
+    local name_fmt
+    name_fmt="$(printf "%-15.15s" "$pkg")"
+    local cur_fmt
+    cur_fmt="$(printf "%-7.7s" "$cur")"
+    local want_fmt
+    want_fmt="$(printf "%-9.9s" "$want")"
+    local latest_fmt
+    latest_fmt="$(printf "%-11.11s" "$latest")"
+    box_text "   ${CYAN}${name_fmt}${RESET} ${YELLOW}${cur_fmt}${RESET} ${GREEN}${want_fmt}${RESET} ${GREEN}${latest_fmt}${RESET} " "$BLUE"
+  done <<< "$outdated"
+  box_line "$BOX_BL" "$BOX_H" "$BOX_BR" "$BLUE"
   echo
 
   if ask_confirm "Deseja atualizar todas as dependencias?"; then
@@ -814,7 +858,7 @@ check_npm_updates() {
     spinner "Atualizando dependencias" npm update
     echo
     echo -e "${GREEN}${BOLD}Dependencias atualizadas com sucesso!${RESET}"
-    
+
     if pm2_exists; then
       echo
       if ask_confirm "Deseja reiniciar o bot para aplicar as atualizacoes?"; then
@@ -827,6 +871,38 @@ check_npm_updates() {
   fi
 
   pause
+}
+
+delete_script() {
+  clear_screen
+  echo -e "${RED}${BOLD}ATENCAO: Esta acao ira remover o script e todos os arquivos do bot.${RESET}"
+  echo -e "${DIM}Isso inclui o diretorio ${BOT_DIR}, o arquivo ${BIN_PATH} e o processo PM2.${RESET}"
+  echo
+  if ! ask_confirm "Deseja realmente continuar e excluir tudo?"; then
+    echo -e "${DIM}Remocao cancelada.${RESET}"
+    pause
+    return 0
+  fi
+
+  if pm2_exists; then
+    echo
+    spinner "Parando bot" pm2 stop "$PM2_NAME"
+    spinner "Removendo bot do PM2" pm2 delete "$PM2_NAME"
+    pm2 save >/dev/null 2>&1 || true
+  fi
+
+  if [[ -d "$APP_DIR" ]]; then
+    spinner "Removendo diretorio do bot" rm -rf "$APP_DIR"
+  fi
+
+  if [[ -f "$BIN_PATH" ]]; then
+    spinner "Removendo script" rm -f "$BIN_PATH"
+  fi
+
+  echo
+  echo -e "${GREEN}${BOLD}Script removido com sucesso.${RESET}"
+  echo -e "${DIM}Fechando...${RESET}"
+  exit 0
 }
 
 verify_installations() {
@@ -859,7 +935,7 @@ menu_loop() {
     echo
     render_menu
     echo
-    echo -ne "${BORDER}${BOLD}Selecione uma opcao [0-7]: ${RESET}"
+    echo -ne "${BORDER}${BOLD}Selecione uma opcao [0-8]: ${RESET}"
 
     local key=""
     read -rsn1 key || true
@@ -873,6 +949,7 @@ menu_loop() {
       5) monitor_logs ;;
       6) verify_installations ;;
       7) check_npm_updates ;;
+      8) delete_script ;;
       0) echo -e "${CYAN}Saindo...${RESET}"; exit 0 ;;
       *)
         echo -e "${YELLOW}Opcao invalida.${RESET}"
