@@ -490,26 +490,44 @@ pm2_pid() {
 }
 
 whatsapp_state() {
+  # Determine the WhatsApp connection state based on PM2 and log contents. If the
+  # underlying process is not running, always report as disconnected rather
+  # than relying on stale log entries. This prevents stale "online" status from
+  # persisting after the bot has been stopped via the menu.
   local out="${LOG_OUT}"
   local err="${LOG_ERR}"
 
+  # If PM2 is not running the process, return DESCONECTADO early.
+  local raw_status
+  raw_status="$(pm2_status_raw)"
+  if [[ "$raw_status" != "online" && "$raw_status" != "ONLINE" ]]; then
+    echo "DESCONECTADO"
+    return 0
+  fi
+
+  # If neither log exists yet, the state is unknown.
   if [[ ! -f "$out" && ! -f "$err" ]]; then
     echo "DESCONHECIDO"
     return 0
   fi
 
+  # Examine the last 200 lines of both stdout and stderr to determine status.
   local tail
   tail="$(tail -n 200 "$out" "$err" 2>/dev/null || true)"
 
+  # A line containing Own LID session created or msg:connected indicates a
+  # successful connection.
   if echo "$tail" | grep -qE 'Own LID session created|"msg":"connected"'; then
     echo "CONECTADO"
     return 0
   fi
+  # If a pairing code is present in the logs, we are still connecting.
   if echo "$tail" | grep -qE 'CODIGO DE PAREAMENTO|CÓDIGO DE PAREAMENTO'; then
     echo "CONECTANDO"
     return 0
   fi
 
+  # Default to disconnected.
   echo "DESCONECTADO"
 }
 
