@@ -1,0 +1,860 @@
+#!/usr/bin/env bash
+set -euo pipefail
+IFS=$'\n\t'
+export LANG=C.UTF-8
+export LC_ALL=C.UTF-8
+
+VERSION="2.0.0"
+APP_TITLE="WPP Bot Manager"
+PM2_NAME="wpp-bot"
+BOT_ZIP_URL="https://github.com/MISTERVPN-MVT/Bot-Baileys-WhatsApp/raw/refs/heads/main/bot-wpp-baileys.zip"
+
+BIN_PATH="/usr/local/bin/wpp"
+APP_DIR="/opt/wpp-bot"
+BOT_DIR="$APP_DIR/bot"
+ZIP_PATH="$APP_DIR/bot-wpp-baileys.zip"
+MARKER_FILE="$APP_DIR/.installed"
+
+PM2_HOME_DEFAULT="/root/.pm2"
+LOG_OUT="$PM2_HOME_DEFAULT/logs/${PM2_NAME}-out.log"
+LOG_ERR="$PM2_HOME_DEFAULT/logs/${PM2_NAME}-error.log"
+
+RESET=$'\e[0m'
+BOLD=$'\e[1m'
+DIM=$'\e[2m'
+
+BLUE=$'\e[34m'
+CYAN=$'\e[36m'
+WHITE=$'\e[97m'
+GREEN=$'\e[32m'
+YELLOW=$'\e[33m'
+RED=$'\e[31m'
+
+BG_GREEN=$'\e[42m'
+BG_RED=$'\e[41m'
+BG_YELLOW=$'\e[43m'
+
+BORDER=$'\e[38;5;33m'
+TITLE_BG=$'\e[48;5;19m'
+INFO=$'\e[96m'
+MUTED=$'\e[90m'
+
+BG_BLUE=$'\e[44m'
+
+WIDTH=70
+
+BOX_TL="+"
+BOX_TR="+"
+BOX_BL="+"
+BOX_BR="+"
+BOX_H="-"
+BOX_V="|"
+BOX_ML="+"
+BOX_MR="+"
+
+_CANON_SAVED=""
+_ECHO_SAVED=""
+
+cleanup_tty() {
+  if [[ -n "${_CANON_SAVED}" || -n "${_ECHO_SAVED}" ]]; then
+    stty sane 2>/dev/null || true
+  fi
+}
+trap cleanup_tty EXIT INT TERM
+
+script_abs_path() {
+  local p
+  p="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+  if command -v readlink >/dev/null 2>&1; then
+    readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "$p"
+  else
+    echo "$p"
+  fi
+}
+
+require_root() {
+  if [[ "$(id -u)" -ne 0 ]]; then
+    echo -e "${RED}${BOLD}Execute como root.${RESET}"
+    echo -e "${DIM}Dica: sudo wpp${RESET}"
+    exit 1
+  fi
+}
+
+self_install() {
+  local script_path
+  script_path="$(script_abs_path)"
+  [[ "$script_path" == "$BIN_PATH" ]] && return 0
+
+  if command -v install >/dev/null 2>&1; then
+    install -m 0755 "$script_path" "$BIN_PATH" 2>/dev/null || true
+  else
+    cp -f "$script_path" "$BIN_PATH" 2>/dev/null || true
+    chmod +x "$BIN_PATH" 2>/dev/null || true
+  fi
+}
+
+repeat_char() {
+  local ch="$1"; local n="$2"
+  printf '%*s' "$n" '' | tr ' ' "$ch"
+}
+
+strip_ansi() {
+  sed -r 's/\x1B\[[0-9;]*[mK]//g'
+}
+
+visible_len() {
+  local s="$1"
+  printf "%s" "$s" | strip_ansi | wc -c | tr -d ' '
+}
+
+pad_right() {
+  local text="$1"; local width="$2"
+  local len; len="$(visible_len "$text")"
+  if (( len >= width )); then
+    echo "$(printf "%s" "$text" | strip_ansi | head -c "$width")"
+  else
+    printf "%s%*s" "$text" $((width-len)) ""
+  fi
+}
+
+center_text() {
+  local text="$1"; local width="$2"
+  local len; len="$(visible_len "$text")"
+  if (( len >= width )); then
+    echo "$(printf "%s" "$text" | strip_ansi | head -c "$width")"
+  else
+    local left=$(((width-len)/2))
+    local right=$((width-len-left))
+    printf "%*s%s%*s" "$left" "" "$text" "$right" ""
+  fi
+}
+
+box_line() {
+  local left="$1" mid="$2" right="$3" color="$4"
+  echo -e "${color}${left}$(repeat_char "${mid}" "$((WIDTH-2))")${right}${RESET}"
+}
+
+box_title() {
+  local title="$1" color="$2"
+  local content_width=$((WIDTH-2))
+  local centered
+  centered="$(center_text "$title" "$content_width")"
+  echo -e "${color}${BOX_V}${RESET}${TITLE_BG}${BOLD}${WHITE}${centered}${RESET}${color}${BOX_V}${RESET}"
+}
+
+box_text() {
+  local text="$1" color="$2"
+  local content_width=$((WIDTH-2))
+  local padded
+  padded="$(pad_right "$text" "$content_width")"
+  echo -e "${color}${BOX_V}${RESET}${WHITE}${padded}${RESET}${color}${BOX_V}${RESET}"
+}
+
+box_kv() {
+  local k="$1" v="$2" color="$3"
+  local content_width=$((WIDTH-2))
+  local line
+  line="${k}: ${v}"
+  line="$(pad_right "$line" "$content_width")"
+  echo -e "${color}${BOX_V}${RESET}${CYAN}${line}${RESET}${color}${BOX_V}${RESET}"
+}
+
+clear_screen() {
+  command -v tput >/dev/null 2>&1 && tput clear || clear
+}
+
+spinner() {
+  local label="$1"; shift
+  local log="$APP_DIR/.wpp_last_action.log"
+  mkdir -p "$APP_DIR" >/dev/null 2>&1 || true
+
+  ("$@") >>"$log" 2>&1 &
+  local pid=$!
+
+  local frames=("*" "o" "O" "o")
+  local i=0
+
+  while kill -0 "$pid" 2>/dev/null; do
+    printf "\r${CYAN}%s${RESET} ${BLUE}%s${RESET}" "$label" "${frames[$i]}"
+    i=$(((i+1)%${#frames[@]}))
+    sleep 0.08
+  done
+
+  wait "$pid" || return $?
+  printf "\r${GREEN}%s${RESET} ${GREEN}OK${RESET}\n" "$label"
+  return 0
+}
+
+pause() {
+  echo
+  read -r -p "${DIM}Pressione ENTER para continuar...${RESET} " _ || true
+}
+
+ask_confirm() {
+  local prompt="$1"
+  echo -e "${YELLOW}${BOLD}${prompt}${RESET}"
+  local resp
+  read -r -p "Digite 'sim' para confirmar: " resp
+  [[ "$resp" =~ ^([sS][iI][mM]|[sS])$ ]]
+}
+
+get_pkg_mgr() {
+  if command -v apt-get >/dev/null 2>&1; then echo "apt"; return 0; fi
+  if command -v dnf >/dev/null 2>&1; then echo "dnf"; return 0; fi
+  if command -v yum >/dev/null 2>&1; then echo "yum"; return 0; fi
+  echo "unknown"
+}
+
+install_packages() {
+  local mgr
+  mgr="$(get_pkg_mgr)"
+
+  case "$mgr" in
+    apt)
+      spinner "Atualizando repositorios (APT)" apt-get update -y
+      spinner "Instalando pacotes base" apt-get install -y curl ca-certificates gnupg unzip git build-essential
+      ;;
+    dnf)
+      spinner "Instalando pacotes base (DNF)" dnf install -y curl ca-certificates gnupg2 unzip git make gcc gcc-c++
+      ;;
+    yum)
+      spinner "Instalando pacotes base (YUM)" yum install -y curl ca-certificates gnupg2 unzip git make gcc gcc-c++
+      ;;
+    *)
+      echo -e "${RED}Gerenciador de pacotes nao suportado automaticamente.${RESET}"
+      echo -e "${DIM}Instale manualmente: curl, unzip, git, build tools, Node.js e PM2.${RESET}"
+      return 1
+      ;;
+  esac
+}
+
+node_version_major() {
+  if ! command -v node >/dev/null 2>&1; then
+    echo 0
+    return 0
+  fi
+  node -v 2>/dev/null | sed 's/^v//' | awk -F. '{print $1}'
+}
+
+ensure_node() {
+  local major
+  major="$(node_version_major)"
+  if (( major >= 18 )); then
+    return 0
+  fi
+
+  echo -e "${YELLOW}Node.js nao encontrado (ou versao < 18). Vamos instalar Node.js 22 via NodeSource.${RESET}"
+  case "$(get_pkg_mgr)" in
+    apt)
+      spinner "Configurando NodeSource (Node 22)" bash -c "curl -fsSL https://deb.nodesource.com/setup_22.x | bash -"
+      spinner "Instalando Node.js" apt-get install -y nodejs
+      ;;
+    dnf)
+      spinner "Configurando NodeSource (Node 22)" bash -c "curl -fsSL https://rpm.nodesource.com/setup_22.x | bash -"
+      spinner "Instalando Node.js" dnf install -y nodejs
+      ;;
+    yum)
+      spinner "Configurando NodeSource (Node 22)" bash -c "curl -fsSL https://rpm.nodesource.com/setup_22.x | bash -"
+      spinner "Instalando Node.js" yum install -y nodejs
+      ;;
+    *)
+      echo -e "${RED}Nao consegui instalar Node automaticamente neste sistema.${RESET}"
+      return 1
+      ;;
+  esac
+}
+
+ensure_pm2() {
+  if command -v pm2 >/dev/null 2>&1; then
+    return 0
+  fi
+  spinner "Instalando PM2 (npm -g)" npm install -g pm2
+}
+
+pm2_configure_startup() {
+  command -v pm2 >/dev/null 2>&1 || return 0
+  pm2 startup systemd -u root --hp /root >/dev/null 2>&1 || true
+  pm2 save >/dev/null 2>&1 || true
+}
+
+download_bot_zip() {
+  mkdir -p "$APP_DIR"
+  if command -v curl >/dev/null 2>&1; then
+    spinner "Baixando bot (zip)" curl -fL "$BOT_ZIP_URL" -o "$ZIP_PATH"
+  elif command -v wget >/dev/null 2>&1; then
+    spinner "Baixando bot (zip)" wget -O "$ZIP_PATH" "$BOT_ZIP_URL"
+  else
+    echo -e "${RED}curl/wget nao encontrado.${RESET}"
+    return 1
+  fi
+}
+
+extract_bot_zip() {
+  mkdir -p "$BOT_DIR"
+  spinner "Extraindo bot" unzip -o "$ZIP_PATH" -d "$BOT_DIR"
+}
+
+bot_entrypoint() {
+  if [[ -f "$BOT_DIR/package.json" ]]; then
+    if grep -q '"start"[[:space:]]*:' "$BOT_DIR/package.json" 2>/dev/null; then
+      echo "npm"
+      return 0
+    fi
+  fi
+  if [[ -f "$BOT_DIR/src/index.js" ]]; then echo "$BOT_DIR/src/index.js"; return 0; fi
+  if [[ -f "$BOT_DIR/index.js" ]]; then echo "$BOT_DIR/index.js"; return 0; fi
+  if [[ -f "$BOT_DIR/main.js" ]]; then echo "$BOT_DIR/main.js"; return 0; fi
+  echo ""
+}
+
+install_bot_deps() {
+  if [[ ! -f "$BOT_DIR/package.json" ]]; then
+    echo -e "${RED}Nao encontrei package.json no bot extraido.${RESET}"
+    echo -e "${DIM}Verifique o conteudo do zip e a pasta: ${BOT_DIR}${RESET}"
+    return 1
+  fi
+  spinner "Instalando dependencias do bot (npm install)" bash -c "cd '$BOT_DIR' && npm install"
+}
+
+show_install_plan() {
+  clear_screen
+  box_line "$BOX_TL" "$BOX_H" "$BOX_TR" "$BLUE"
+  box_text "$(center_text "$APP_TITLE" $((WIDTH-2)))" "$BLUE"
+  box_text "$(center_text "Instalacao inicial" $((WIDTH-2)))" "$BLUE"
+  box_line "$BOX_ML" "$BOX_H" "$BOX_MR" "$BLUE"
+
+  box_text "O que sera feito:" "$BLUE"
+  box_text "  * Baixar e extrair o bot (zip)" "$BLUE"
+  box_text "  * Instalar dependencias do sistema" "$BLUE"
+  box_text "  * Instalar Node.js (se necessario)" "$BLUE"
+  box_text "  * Instalar PM2 (se necessario)" "$BLUE"
+  box_text "  * npm install na pasta do bot" "$BLUE"
+  box_text "  * Configurar .env" "$BLUE"
+  box_line "$BOX_ML" "$BOX_H" "$BOX_MR" "$BLUE"
+
+  local nodev npmv pm2v
+  nodev="$(command -v node >/dev/null 2>&1 && node -v || echo 'nao instalado')"
+  npmv="$(command -v npm >/dev/null 2>&1 && npm -v || echo 'nao instalado')"
+  pm2v="$(command -v pm2 >/dev/null 2>&1 && pm2 -v || echo 'nao instalado')"
+
+  box_kv "Node" "$nodev" "$BLUE"
+  box_kv "NPM" "$npmv" "$BLUE"
+  box_kv "PM2" "$pm2v" "$BLUE"
+  box_kv "Destino" "$BOT_DIR" "$BLUE"
+  box_line "$BOX_BL" "$BOX_H" "$BOX_BR" "$BLUE"
+  echo
+}
+
+configure_env_wizard() {
+  local env_file="$BOT_DIR/.env"
+  mkdir -p "$BOT_DIR" >/dev/null 2>&1 || true
+
+  if [[ -f "$env_file" ]]; then
+    echo -e "${CYAN}${BOLD}.env encontrado:${RESET} ${env_file}"
+    echo -e "${DIM}Voce pode manter como esta ou preencher agora pelo assistente.${RESET}"
+    echo
+    echo -e "${WHITE}[1]${RESET} Ja preenchi manualmente (manter)"
+    echo -e "${WHITE}[2]${RESET} Preencher/Editar agora"
+    echo
+    read -r -p "Escolha: " ans
+    if [[ "$ans" == "1" ]]; then
+      return 0
+    fi
+  else
+    : >"$env_file"
+  fi
+
+  declare -A cur
+  while IFS='=' read -r k v; do
+    [[ -z "${k:-}" ]] && continue
+    cur["$k"]="${v:-}"
+  done < <(grep -E '^[A-Z0-9_]+=' "$env_file" 2>/dev/null || true)
+
+  local keys=(
+    "PANEL_DOMAIN"
+    "PANEL_TOKEN"
+    "ADMIN_NUMBER"
+    "BOT_NUMBER"
+    "APP_LINK"
+    "MP_ACCESS_TOKEN"
+    "MP_WEBHOOK_URL"
+    "TEST_MINUTES"
+  )
+
+  echo
+  echo -e "${CYAN}${BOLD}Assistente de configuracao (.env)${RESET}"
+  echo -e "${DIM}Dica: pressione ENTER para manter o valor atual.${RESET}"
+
+  local tmp
+  tmp="$(mktemp)"
+  chmod 600 "$tmp" || true
+
+  for k in "${keys[@]}"; do
+    local current="${cur[$k]:-}"
+    local shown="$current"
+
+    if [[ "$k" =~ (TOKEN|ACCESS_TOKEN) ]] && [[ -n "$current" ]]; then
+      local head="${current:0:4}"
+      local tail="${current: -4}"
+      shown="${head}****${tail}"
+    fi
+
+    echo
+    echo -e "${WHITE}${BOLD}$k${RESET} ${DIM}(atual: ${shown:-vazio})${RESET}"
+    read -r -p "Novo valor: " input
+    if [[ -z "${input}" ]]; then
+      input="$current"
+    fi
+    printf "%s=%s\n" "$k" "$input" >>"$tmp"
+  done
+
+  mv -f "$tmp" "$env_file"
+  chmod 600 "$env_file" || true
+
+  echo
+  echo -e "${GREEN}${BOLD}.env configurado com sucesso.${RESET}"
+}
+
+first_run() {
+  show_install_plan
+
+  if ! ask_confirm "Deseja continuar com a instalacao agora?"; then
+    echo -e "${RED}Instalacao cancelada.${RESET}"
+    exit 0
+  fi
+
+  if ! command -v unzip >/dev/null 2>&1 || (! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1); then
+    echo -e "${YELLOW}Algumas ferramentas basicas estao faltando (curl/wget/unzip). Vou instalar pacotes base primeiro.${RESET}"
+    install_packages
+  fi
+
+  download_bot_zip
+  if [[ -d "$BOT_DIR" ]]; then
+    local bak="$APP_DIR/bot.backup.$(date +%Y%m%d%H%M%S)"
+    spinner "Fazendo backup do bot atual" bash -c "mv '$BOT_DIR' '$bak'"
+  fi
+  mkdir -p "$BOT_DIR"
+  extract_bot_zip
+
+  show_install_plan
+  box_line "$BOX_TL" "$BOX_H" "$BOX_TR" "$BLUE"
+  box_text "Dependencias do sistema" "$BLUE"
+  box_line "$BOX_ML" "$BOX_H" "$BOX_MR" "$BLUE"
+  box_text "  * curl, ca-certificates, gnupg, unzip, git, build tools" "$BLUE"
+  box_text "  * Node.js 22 (se necessario)" "$BLUE"
+  box_text "  * PM2 (npm -g)" "$BLUE"
+  box_line "$BOX_BL" "$BOX_H" "$BOX_BR" "$BLUE"
+  echo
+
+  if ! ask_confirm "Confirmar e instalar dependencias + bot?"; then
+    echo -e "${RED}Instalacao cancelada (bot extraido, sem dependencias).${RESET}"
+    exit 0
+  fi
+
+  install_packages
+  ensure_node
+  ensure_pm2
+  install_bot_deps
+  pm2_configure_startup
+
+  configure_env_wizard
+
+  touch "$MARKER_FILE"
+  echo
+  echo -e "${GREEN}${BOLD}Instalacao concluida.${RESET}"
+  pause
+}
+
+pm2_exists() {
+  command -v pm2 >/dev/null 2>&1 || return 1
+  pm2 describe "$PM2_NAME" >/dev/null 2>&1
+}
+
+pm2_status_raw() {
+  if ! command -v pm2 >/dev/null 2>&1; then
+    echo "PM2_OFFLINE"
+    return 0
+  fi
+  if ! pm2_exists; then
+    echo "NOT_CREATED"
+    return 0
+  fi
+  pm2 describe "$PM2_NAME" 2>/dev/null | awk -F: '/status/ {print $2; exit}' | xargs || true
+}
+
+pm2_field() {
+  local field="$1"
+  pm2 describe "$PM2_NAME" 2>/dev/null | awk -F: -v f="$field" '$1 ~ f {print $2; exit}' | xargs || true
+}
+
+pm2_pid() {
+  command -v pm2 >/dev/null 2>&1 || { echo ""; return 0; }
+  pm2 pid "$PM2_NAME" 2>/dev/null | tr -d ' ' || true
+}
+
+whatsapp_state() {
+  local out="${LOG_OUT}"
+  local err="${LOG_ERR}"
+
+  if [[ ! -f "$out" && ! -f "$err" ]]; then
+    echo "DESCONHECIDO"
+    return 0
+  fi
+
+  local tail
+  tail="$(tail -n 200 "$out" "$err" 2>/dev/null || true)"
+
+  if echo "$tail" | grep -qiE 'pairing|pareamento|c[oó]digo'; then
+    echo "PAREANDO"
+    return 0
+  fi
+  if echo "$tail" | grep -qiE 'connected|conectad|ready|logged in|connection open|opened|session opened'; then
+    echo "CONECTADO"
+    return 0
+  fi
+
+  echo "DESCONHECIDO"
+}
+
+status_badge() {
+  local st="$1"
+  case "$st" in
+    online|ONLINE)
+      echo -e "${BG_GREEN}${BOLD}  ONLINE  ${RESET}"
+      ;;
+    stopped|STOPPED)
+      echo -e "${BG_RED}${BOLD}  OFFLINE ${RESET}"
+      ;;
+    errored|ERRORED)
+      echo -e "${BG_RED}${BOLD}  ERRO    ${RESET}"
+      ;;
+    PM2_OFFLINE)
+      echo -e "${BG_YELLOW}${BOLD}  PM2 OFF ${RESET}"
+      ;;
+    NOT_CREATED)
+      echo -e "${BG_BLUE}${BOLD}  N/INIC  ${RESET}"
+      ;;
+    *)
+      echo -e "${BG_YELLOW}${BOLD}  ${st^^}  ${RESET}"
+      ;;
+  esac
+}
+
+render_header() {
+  box_line "$BOX_TL" "$BOX_H" "$BOX_TR" "$BORDER"
+  box_title "WPP BOT MANAGER" "$BORDER"
+  box_text "$(center_text "Next-Generation WhatsApp Bot Management System" $((WIDTH-2)))" "$BORDER"
+  box_text "$(center_text "Author: MisterVPN (MISTERVPN-MVT)" $((WIDTH-2)))" "$BORDER"
+  box_line "$BOX_BL" "$BOX_H" "$BOX_BR" "$BORDER"
+}
+
+render_status_panel() {
+  local raw wa badge
+  raw="$(pm2_status_raw)"
+  wa="$(whatsapp_state)"
+  badge="$(status_badge "$raw")"
+
+  local mem="-" pid="-" pm2id="-"
+  if [[ "$raw" != "PM2_OFFLINE" && "$raw" != "NOT_CREATED" ]]; then
+    mem="$(pm2_field 'memory' || true)"; [[ -z "$mem" ]] && mem="-"
+    pid="$(pm2_pid)"; [[ -z "$pid" || "$pid" == "0" ]] && pid="-"
+    pm2id="$(pm2_field 'pm2 id' || true)"; [[ -z "$pm2id" ]] && pm2id="-"
+  fi
+
+  box_line "$BOX_TL" "$BOX_H" "$BOX_TR" "$BORDER"
+  box_text "$(pad_right "${BOLD}STATUS:${RESET} ${badge}   ${BOLD}WHATSAPP:${RESET} ${wa}   ${BOLD}ID:${RESET} ${pm2id}" $((WIDTH-2)))" "$BORDER"
+  box_text "$(pad_right "${INFO}RAM:${RESET} ${mem}   ${INFO}PID:${RESET} ${pid}   ${INFO}DIR:${RESET} ${BOT_DIR}" $((WIDTH-2)))" "$BORDER"
+  box_line "$BOX_BL" "$BOX_H" "$BOX_BR" "$BORDER"
+}
+
+render_menu() {
+  local raw wa
+  raw="$(pm2_status_raw)"
+  wa="$(whatsapp_state)"
+
+  local start_label="${INFO}[1]${RESET} ${WHITE}Iniciar Bot${RESET}"
+  if [[ "$raw" == "online" || "$raw" == "ONLINE" || "$wa" == "CONECTADO" ]]; then
+    start_label="${MUTED}[1]${RESET} ${MUTED}Iniciar Bot (indisponivel)${RESET}"
+  fi
+
+  box_line "$BOX_TL" "$BOX_H" "$BOX_TR" "$BORDER"
+  box_text "$(center_text "${BOLD}MENU INICIAL${RESET}" $((WIDTH-2)))" "$BORDER"
+  box_line "$BOX_ML" "$BOX_H" "$BOX_MR" "$BORDER"
+
+  box_text " ${start_label}" "$BORDER"
+  box_text " ${INFO}[2]${RESET} ${WHITE}Reiniciar Bot${RESET}" "$BORDER"
+  box_text " ${INFO}[3]${RESET} ${WHITE}Parar Bot${RESET}" "$BORDER"
+  box_text " ${INFO}[4]${RESET} ${WHITE}Configurar .env${RESET}" "$BORDER"
+  box_text " ${INFO}[5]${RESET} ${WHITE}Monitorar Logs (ao vivo)${RESET}" "$BORDER"
+  box_text " ${INFO}[6]${RESET} ${WHITE}Verificar / Reparar Instalacao${RESET}" "$BORDER"
+  box_text " ${RED}[0]${RESET} ${RED}Sair${RESET}" "$BORDER"
+
+  box_line "$BOX_BL" "$BOX_H" "$BOX_BR" "$BORDER"
+  echo ""
+  echo -ne "${BORDER}${BOLD}Selecione uma opcao [0-6]: ${RESET}"
+}
+
+ensure_installed() {
+  if [[ ! -f "$MARKER_FILE" ]]; then
+    first_run
+  fi
+}
+
+show_pairing_code_box() {
+  local code="$1"
+  clear_screen
+
+  box_line "$BOX_TL" "$BOX_H" "$BOX_TR" "$BLUE"
+  box_text "$(center_text "CODIGO DE PAREAMENTO" $((WIDTH-2)))" "$BLUE"
+  box_line "$BOX_ML" "$BOX_H" "$BOX_MR" "$BLUE"
+  box_text "" "$BLUE"
+  box_text "$(center_text "$code" $((WIDTH-2)))" "$BLUE"
+  box_text "" "$BLUE"
+  box_line "$BOX_ML" "$BOX_H" "$BOX_MR" "$BLUE"
+  box_text "Abra o WhatsApp -> Dispositivos conectados -> Conectar" "$BLUE"
+  box_text "Cole/insira o codigo acima e aguarde finalizar." "$BLUE"
+  box_line "$BOX_BL" "$BOX_H" "$BOX_BR" "$BLUE"
+}
+
+extract_pairing_code_from_logs() {
+  local out="${LOG_OUT}"
+  local err="${LOG_ERR}"
+  local tail
+  tail="$(tail -n 250 "$out" "$err" 2>/dev/null || true)"
+  echo "$tail" | grep -Eo '[A-Z0-9]{4}-[A-Z0-9]{4}|[0-9]{8}' | tail -n 1 || true
+}
+
+wait_for_connection() {
+  local start_ts
+  start_ts="$(date +%s)"
+
+  local showed_code=0
+  local last_code=""
+
+  while true; do
+    local now
+    now="$(date +%s)"
+
+    if (( now - start_ts > 300 )); then
+      echo -e "${YELLOW}Tempo limite. Verifique os logs.${RESET}"
+      return 1
+    fi
+
+    local raw
+    raw="$(pm2_status_raw)"
+
+    if [[ "$raw" == "errored" || "$raw" == "ERRORED" ]]; then
+      echo -e "${RED}O processo entrou em ERRO. Abra os logs para detalhes.${RESET}"
+      return 1
+    fi
+
+    if [[ "$raw" != "online" && "$raw" != "ONLINE" ]]; then
+      sleep 1
+      continue
+    fi
+
+    local code
+    code="$(extract_pairing_code_from_logs)"
+    if [[ -n "$code" && "$code" != "$last_code" ]]; then
+      last_code="$code"
+      show_pairing_code_box "$code"
+      showed_code=1
+    fi
+
+    local wa
+    wa="$(whatsapp_state)"
+    if [[ "$wa" == "CONECTADO" ]]; then
+      if (( showed_code == 1 )); then
+        echo
+        echo -e "${GREEN}${BOLD}Conexao concluida com sucesso!${RESET}"
+      fi
+      return 0
+    fi
+
+    if (( showed_code == 1 )); then
+      echo -ne "\r${CYAN}Aguardando conexao...${RESET} ${DIM}(logs em tempo real)${RESET}"
+      sleep 2
+    else
+      echo -ne "\r${CYAN}Iniciando conexao do bot...${RESET} ${BLUE}*${RESET}"
+      sleep 1
+    fi
+  done
+}
+
+start_bot() {
+  ensure_installed
+
+  command -v pm2 >/dev/null 2>&1 || {
+    echo -e "${RED}PM2 nao esta instalado.${RESET}"
+    return 1
+  }
+
+  local raw
+  raw="$(pm2_status_raw)"
+
+  if [[ "$raw" == "online" || "$raw" == "ONLINE" ]]; then
+    echo -e "${YELLOW}O bot ja esta em execucao.${RESET}"
+    return 0
+  fi
+
+  local ep
+  ep="$(bot_entrypoint)"
+
+  if ! pm2_exists; then
+    if [[ "$ep" == "npm" ]]; then
+      spinner "Criando processo PM2" bash -c "cd '$BOT_DIR' && pm2 start npm --name '$PM2_NAME' -- start"
+    elif [[ -n "$ep" ]]; then
+      spinner "Criando processo PM2" pm2 start "$ep" --name "$PM2_NAME"
+    else
+      echo -e "${RED}Nao consegui detectar o entrypoint do bot.${RESET}"
+      echo -e "${DIM}Procure por src/index.js ou package.json com script start.${RESET}"
+      return 1
+    fi
+  else
+    spinner "Iniciando PM2" pm2 start "$PM2_NAME"
+  fi
+
+  pm2 save >/dev/null 2>&1 || true
+
+  echo
+  wait_for_connection || true
+  echo
+  pause
+}
+
+stop_bot() {
+  command -v pm2 >/dev/null 2>&1 || { echo -e "${RED}PM2 nao esta instalado.${RESET}"; return 1; }
+  if ! pm2_exists; then
+    echo -e "${YELLOW}O bot ainda nao foi iniciado no PM2.${RESET}"
+    return 0
+  fi
+
+  if ! ask_confirm "Confirma parar o bot?"; then
+    echo -e "${DIM}Acao cancelada.${RESET}"
+    return 0
+  fi
+
+  spinner "Parando bot" pm2 stop "$PM2_NAME"
+  pm2 save >/dev/null 2>&1 || true
+  pause
+}
+
+restart_bot() {
+  command -v pm2 >/dev/null 2>&1 || { echo -e "${RED}PM2 nao esta instalado.${RESET}"; return 1; }
+  if ! pm2_exists; then
+    echo -e "${YELLOW}O bot ainda nao foi criado no PM2. Use Iniciar.${RESET}"
+    return 0
+  fi
+
+  if ! ask_confirm "Confirma reiniciar o bot?"; then
+    echo -e "${DIM}Acao cancelada.${RESET}"
+    return 0
+  fi
+
+  spinner "Reiniciando bot" pm2 restart "$PM2_NAME"
+  pm2 save >/dev/null 2>&1 || true
+  pause
+}
+
+monitor_logs() {
+  command -v pm2 >/dev/null 2>&1 || { echo -e "${RED}PM2 nao esta instalado.${RESET}"; return 1; }
+  if ! pm2_exists; then
+    echo -e "${YELLOW}O bot ainda nao foi criado no PM2.${RESET}"
+    pause
+    return 0
+  fi
+
+  clear_screen
+  echo -e "${CYAN}${BOLD}Logs do bot (CTRL+C para voltar)${RESET}\n"
+  pm2 logs "$PM2_NAME"
+}
+
+optimize_system() {
+  echo -e "${CYAN}${BOLD}Otimizacao:${RESET}"
+  echo -e "${DIM}  * Limpar logs do PM2\n  * Limpar cache do npm\n  * Autoremove (se apt)${RESET}"
+  echo
+
+  if ! ask_confirm "Confirmar otimizacao?"; then
+    echo -e "${DIM}Acao cancelada.${RESET}"
+    pause
+    return 0
+  fi
+
+  command -v pm2 >/dev/null 2>&1 && spinner "Limpando logs PM2" pm2 flush || true
+  command -v npm >/dev/null 2>&1 && spinner "Limpando cache npm" npm cache clean --force || true
+
+  if [[ "$(get_pkg_mgr)" == "apt" ]]; then
+    spinner "Autoremove (APT)" apt-get autoremove -y || true
+  fi
+
+  echo -e "${GREEN}Concluido.${RESET}"
+  pause
+}
+
+verify_installations() {
+  clear_screen
+  render_header
+
+  box_line "$BOX_TL" "$BOX_H" "$BOX_TR" "$BLUE"
+  box_text "$(center_text "VERIFICACAO" $((WIDTH-2)))" "$BLUE"
+  box_line "$BOX_ML" "$BOX_H" "$BOX_MR" "$BLUE"
+  box_kv "Node" "$(command -v node >/dev/null 2>&1 && node -v || echo 'nao instalado')" "$BLUE"
+  box_kv "NPM" "$(command -v npm >/dev/null 2>&1 && npm -v || echo 'nao instalado')" "$BLUE"
+  box_kv "PM2" "$(command -v pm2 >/dev/null 2>&1 && pm2 -v || echo 'nao instalado')" "$BLUE"
+  box_kv "Bot" "$( [[ -d "$BOT_DIR" ]] && echo 'encontrado' || echo 'nao encontrado' )" "$BLUE"
+  box_kv ".env" "$( [[ -f "$BOT_DIR/.env" ]] && echo 'encontrado' || echo 'nao encontrado' )" "$BLUE"
+  box_kv "Marker" "$( [[ -f "$MARKER_FILE" ]] && echo 'ok' || echo 'nao instalado' )" "$BLUE"
+  box_line "$BOX_BL" "$BOX_H" "$BOX_BR" "$BLUE"
+
+  echo
+  echo -e "${DIM}Ultimo log de acao (se existir): ${APP_DIR}/.wpp_last_action.log${RESET}"
+  pause
+}
+
+menu_loop() {
+  while true; do
+    clear_screen
+    render_header
+    echo
+    render_status_panel
+    echo
+    render_menu
+
+    echo
+    echo -ne "${WHITE}${BOLD}Opcao:${RESET} "
+
+    local key=""
+    if read -rsn1 -t 2 key; then
+      echo
+    else
+      continue
+    fi
+
+    case "$key" in
+      1) start_bot ;;
+      2) stop_bot ;;
+      3) restart_bot ;;
+      4) monitor_logs ;;
+      5) optimize_system ;;
+      6) verify_installations ;;
+      0) exit 0 ;;
+      *)
+        echo -e "${YELLOW}Opcao invalida.${RESET}"
+        sleep 0.7
+        ;;
+    esac
+  done
+}
+
+main() {
+  require_root
+  self_install || true
+
+  if [[ ! -f "$MARKER_FILE" ]]; then
+    first_run
+  fi
+
+  menu_loop
+}
+
+main "$@"
